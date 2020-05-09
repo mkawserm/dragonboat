@@ -14,36 +14,36 @@
 
 package plugin
 
-import (
-	"os"
-	"testing"
-
-	"github.com/lni/dragonboat/v3"
-	"github.com/lni/dragonboat/v3/config"
-	"github.com/lni/dragonboat/v3/internal/vfs"
-)
-
-var (
-	singleNodeHostTestDir = "plugin_test_dir_safe_to_delete"
-)
-
-func testLogDBPluginCanBeUsed(t *testing.T, f config.LogDBFactoryFunc) {
-	os.RemoveAll(singleNodeHostTestDir)
-	defer os.RemoveAll(singleNodeHostTestDir)
-	nhc := config.NodeHostConfig{
-		NodeHostDir:    singleNodeHostTestDir,
-		RTTMillisecond: 20,
-		RaftAddress:    "localhost:26000",
-		LogDBFactory:   f,
-		FS:             vfs.DefaultFS,
-	}
-	nh, err := dragonboat.NewNodeHost(nhc)
-	if err != nil {
-		t.Fatalf("failed to create nodehost %v", err)
-	}
-	defer nh.Stop()
-}
-
-func TestLogDBPluginsCanBeUsed(t *testing.T) {
-	//testLogDBPluginCanBeUsed(t, rocksdb.NewLogDB)
-}
+//import (
+//	"os"
+//	"testing"
+//
+//	"github.com/lni/dragonboat/v3"
+//	"github.com/lni/dragonboat/v3/config"
+//	"github.com/lni/dragonboat/v3/internal/vfs"
+//)
+//
+//var (
+//	singleNodeHostTestDir = "plugin_test_dir_safe_to_delete"
+//)
+//
+//func testLogDBPluginCanBeUsed(t *testing.T, f config.LogDBFactoryFunc) {
+//	os.RemoveAll(singleNodeHostTestDir)
+//	defer os.RemoveAll(singleNodeHostTestDir)
+//	nhc := config.NodeHostConfig{
+//		NodeHostDir:    singleNodeHostTestDir,
+//		RTTMillisecond: 20,
+//		RaftAddress:    "localhost:26000",
+//		LogDBFactory:   f,
+//		FS:             vfs.DefaultFS,
+//	}
+//	nh, err := dragonboat.NewNodeHost(nhc)
+//	if err != nil {
+//		t.Fatalf("failed to create nodehost %v", err)
+//	}
+//	defer nh.Stop()
+//}
+//
+//func TestLogDBPluginsCanBeUsed(t *testing.T) {
+//	//testLogDBPluginCanBeUsed(t, rocksdb.NewLogDB)
+//}

@@ -105,7 +105,7 @@ ifneq ($(DRAGONBOAT_MEMFS_TEST),)
 $(info using memfs based pebble)
 LOGDB_TAG=dragonboat_memfs_test
 else
-$(info using pebble based log storage)
+$(info using badger based log storage)
 endif
 
 else
@@ -364,7 +364,7 @@ test-tools:
 ###############################################################################
 CHECKED_PKGS=internal/raft internal/logdb internal/logdb/kv internal/transport \
 	internal/cpp internal/rsm internal/settings internal/tests internal/server   \
-	internal/logdb/kv/rocksdb plugin/rocksdb plugin/chan raftpb tools logger     \
+	internal/logdb/kv/badger plugin/chan raftpb tools logger     \
 	raftio config statemachine client internal/utils/dio internal/vfs
 
 static-check:
@@ -378,7 +378,7 @@ static-check:
 
 GOLANGCI_LINT_PKGS=internal/raft internal/rsm internal/cpp internal/transport  \
 	internal/server statemachine tools raftpb raftio client tools logger config  \
-	internal/logdb/kv/rocksdb internal/logdb/kv/pebble plugin/rocksdb            \
+	internal/logdb/kv/badger           \
 	plugin/chan internal/settings internal/tests internal/logdb/kv               \
 	internal/utils/dio internal/vfs internal/logdb
 EXTRA_LINTERS=-E dupl -E misspell -E scopelint -E interfacer

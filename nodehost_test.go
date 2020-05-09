@@ -40,7 +40,7 @@ import (
 	"github.com/lni/dragonboat/v3/config"
 	"github.com/lni/dragonboat/v3/internal/fileutil"
 	"github.com/lni/dragonboat/v3/internal/logdb"
-	"github.com/lni/dragonboat/v3/internal/logdb/kv/pebble"
+	"github.com/lni/dragonboat/v3/internal/logdb/kv/badger"
 	"github.com/lni/dragonboat/v3/internal/rsm"
 	"github.com/lni/dragonboat/v3/internal/server"
 	"github.com/lni/dragonboat/v3/internal/tests"
@@ -4117,7 +4117,7 @@ func TestNodeHostWithUnexpectedDeploymentIDWillBeDetected(t *testing.T) {
 	tf := func() {
 		pf := func(config config.LogDBConfig,
 			dirs []string, lldirs []string) (raftio.ILogDB, error) {
-			return logdb.NewLogDB(config, dirs, lldirs, false, false, fs, pebble.NewKVStore)
+			return logdb.NewLogDB(config, dirs, lldirs, false, false, fs, badger.NewKVStore)
 		}
 		nhc := config.NodeHostConfig{
 			NodeHostDir:    singleNodeHostTestDir,
@@ -4148,7 +4148,7 @@ func TestNodeHostUsingPebbleCanBeCreated(t *testing.T) {
 	tf := func() {
 		pf := func(config config.LogDBConfig,
 			dirs []string, lldirs []string) (raftio.ILogDB, error) {
-			return logdb.NewLogDB(config, dirs, lldirs, false, false, fs, pebble.NewKVStore)
+			return logdb.NewLogDB(config, dirs, lldirs, false, false, fs, badger.NewKVStore)
 		}
 		nhc := config.NodeHostConfig{
 			NodeHostDir:    singleNodeHostTestDir,

@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// +build !dragonboat_monkeytest
+// +build dragonboat_monkeytest
 
-package pebble
+package badger
 
 const (
-	inMonkeyTesting = false
+	inMonkeyTesting = true
 )
