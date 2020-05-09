@@ -40,3 +40,4 @@ internal/tests/cppkv/kv.pb.cc
 internal/tests/cppkv/kv.pb.h
 libdragonboat.h
 /snapbench
+.idea
