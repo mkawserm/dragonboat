@@ -21,6 +21,7 @@ import (
 
 	"github.com/lni/goutils/syncutil"
 
+	"github.com/lni/dragonboat/v3/config"
 	"github.com/lni/dragonboat/v3/internal/server"
 	"github.com/lni/dragonboat/v3/internal/settings"
 	"github.com/lni/dragonboat/v3/internal/vfs"
@@ -29,8 +30,8 @@ import (
 )
 
 var (
-	numOfStepEngineWorker = settings.Hard.StepEngineWorkerCount
-	numOfRocksDBInstance  = settings.Hard.LogDBPoolSize
+	numOfWorkers = settings.Hard.StepEngineWorkerCount
+	numOfShards  = settings.Hard.LogDBPoolSize
 	// InitRDBContextValueSize defines the initial size of RDB buffer.
 	InitRDBContextValueSize uint64 = 32 * 1024
 	// RDBContextValueSize defines the max size of RDB buffer to be retained.
@@ -49,15 +50,15 @@ type ShardedRDB struct {
 	stopper              *syncutil.Stopper
 }
 
-func checkAllShards(dirs []string,
-	lls []string, fs vfs.IFS, kvf kvFactory) (bool, error) {
-	for i := uint64(0); i < numOfRocksDBInstance; i++ {
+func checkAllShards(config config.LogDBConfig,
+	dirs []string, lls []string, fs vfs.IFS, kvf kvFactory) (bool, error) {
+	for i := uint64(0); i < numOfShards; i++ {
 		dir := fs.PathJoin(dirs[i], fmt.Sprintf("logdb-%d", i))
 		lldir := ""
 		if len(lls) > 0 {
 			lldir = fs.PathJoin(lls[i], fmt.Sprintf("logdb-%d", i))
 		}
-		batched, err := hasBatchedRecord(dir, lldir, fs, kvf)
+		batched, err := hasBatchedRecord(config, dir, lldir, fs, kvf)
 		if err != nil {
 			return false, err
 		}
@@ -69,8 +70,9 @@ func checkAllShards(dirs []string,
 }
 
 // OpenShardedRDB creates a ShardedRDB instance.
-func OpenShardedRDB(dirs []string, lldirs []string,
-	batched bool, check bool, fs vfs.IFS, kvf kvFactory) (*ShardedRDB, error) {
+func OpenShardedRDB(config config.LogDBConfig,
+	dirs []string, lldirs []string, batched bool, check bool,
+	fs vfs.IFS, kvf kvFactory) (*ShardedRDB, error) {
 	shards := make([]*rdb, 0)
 	if batched {
 		plog.Infof("using batched ShardedRDB")
@@ -83,19 +85,19 @@ func OpenShardedRDB(dirs []string, lldirs []string,
 	var err error
 	if check {
 		plog.Infof("checking all LogDB shards...")
-		batched, err = checkAllShards(dirs, lldirs, fs, kvf)
+		batched, err = checkAllShards(config, dirs, lldirs, fs, kvf)
 		if err != nil {
 			return nil, err
 		}
 		plog.Infof("all shards checked, batched: %t", batched)
 	}
-	for i := uint64(0); i < numOfRocksDBInstance; i++ {
+	for i := uint64(0); i < numOfShards; i++ {
 		dir := fs.PathJoin(dirs[i], fmt.Sprintf("logdb-%d", i))
 		lldir := ""
 		if len(lldirs) > 0 {
 			lldir = fs.PathJoin(lldirs[i], fmt.Sprintf("logdb-%d", i))
 		}
-		db, err := openRDB(dir, lldir, batched, fs, kvf)
+		db, err := openRDB(config, dir, lldir, batched, fs, kvf)
 		if err != nil {
 			for _, s := range shards {
 				s.close()
@@ -104,8 +106,7 @@ func OpenShardedRDB(dirs []string, lldirs []string,
 		}
 		shards = append(shards, db)
 	}
-	partitioner := server.NewDoubleFixedPartitioner(numOfRocksDBInstance,
-		numOfStepEngineWorker)
+	partitioner := server.NewDoubleFixedPartitioner(numOfShards, numOfWorkers)
 	mw := &ShardedRDB{
 		shards:       shards,
 		partitioner:  partitioner,

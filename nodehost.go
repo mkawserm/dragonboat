@@ -327,7 +327,8 @@ func NewNodeHost(nhConfig config.NodeHostConfig) (*NodeHost, error) {
 		nh.Stop()
 		return nil, err
 	}
-	nh.execEngine = newExecEngine(nh, nh.serverCtx, nh.logdb)
+	nh.execEngine = newExecEngine(nh,
+		nh.nhConfig.NotifyCommit, nh.serverCtx, nh.logdb)
 	nh.stopper.RunWorker(func() {
 		nh.nodeMonitorMain(nhConfig)
 	})
@@ -768,12 +769,12 @@ func (nh *NodeHost) SyncCloseSession(ctx context.Context,
 // immediate after the return of this method.
 //
 // This method returns a RequestState instance or an error immediately.
-// Application can wait on the CompletedC member channel of the returned
-// RequestState instance to get notified for the outcome of the proposal and
-// access to the result of the proposal.
+// Application can wait on the ResultC() channel of the returned RequestState
+// instance to get notified for the outcome of the proposal and access to the
+// result of the proposal.
 //
 // After the proposal is completed, i.e. RequestResult is received from the
-// CompletedC channel of the returned RequestState, unless NO-OP client session
+// ResultC() channel of the returned RequestState, unless NO-OP client session
 // is used, it is caller's responsibility to update the Session instance
 // accordingly based on the RequestResult.Code value. Basically, when
 // RequestTimeout is returned, you can retry the same proposal without updating
@@ -785,15 +786,15 @@ func (nh *NodeHost) SyncCloseSession(ctx context.Context,
 // session ready to be used in future proposals.
 func (nh *NodeHost) Propose(session *client.Session, cmd []byte,
 	timeout time.Duration) (*RequestState, error) {
-	return nh.propose(session, cmd, nil, timeout)
+	return nh.propose(session, cmd, timeout)
 }
 
 // ProposeSession starts an asynchronous proposal on the specified cluster
 // for client session related operations. Depending on the state of the specified
 // client session object, the supported operations are for registering or
-// unregistering a client session. Application can select on the CompletedC
-// member channel of the returned RequestState instance to get notified for the
-// outcome of the operation.
+// unregistering a client session. Application can select on the ResultC()
+// channel of the returned RequestState instance to get notified for the
+// completion (RequestResult.Completed() is true) of the operation.
 func (nh *NodeHost) ProposeSession(session *client.Session,
 	timeout time.Duration) (*RequestState, error) {
 	v, ok := nh.getCluster(session.ClusterID)
@@ -803,14 +804,14 @@ func (nh *NodeHost) ProposeSession(session *client.Session,
 	if !v.supportClientSession() && !session.IsNoOPSession() {
 		plog.Panicf("IOnDiskStateMachine based nodes must use NoOPSession")
 	}
-	req, err := v.proposeSession(session, nil, nh.getTimeoutTick(timeout))
-	nh.execEngine.setNodeReady(session.ClusterID)
+	req, err := v.proposeSession(session, nh.getTimeoutTick(timeout))
+	nh.execEngine.setStepReady(session.ClusterID)
 	return req, err
 }
 
 // ReadIndex starts the asynchronous ReadIndex protocol used for linearizable
 // read on the specified cluster. This method returns a RequestState instance
-// or an error immediately. Application should wait on the CompletedC channel
+// or an error immediately. Application should wait on the ResultC() channel
 // of the returned RequestState object to get notified on the outcome of the
 // ReadIndex operation. On a successful completion, the ReadLocal method can
 // then be invoked to query the state of the IStateMachine or
@@ -818,7 +819,7 @@ func (nh *NodeHost) ProposeSession(session *client.Session,
 // guarantee.
 func (nh *NodeHost) ReadIndex(clusterID uint64,
 	timeout time.Duration) (*RequestState, error) {
-	rs, _, err := nh.readIndex(clusterID, nil, timeout)
+	rs, _, err := nh.readIndex(clusterID, timeout)
 	return rs, err
 }
 
@@ -906,7 +907,7 @@ func (nh *NodeHost) SyncRequestSnapshot(ctx context.Context,
 		return 0, err
 	}
 	select {
-	case r := <-rs.CompletedC:
+	case r := <-rs.AppliedC():
 		if r.Completed() {
 			return r.GetResult().Value, nil
 		} else if r.Rejected() {
@@ -949,12 +950,12 @@ func (nh *NodeHost) SyncRequestSnapshot(ctx context.Context,
 // nodes are typically used to trigger Raft log and snapshot compactions.
 //
 // RequestSnapshot returns a RequestState instance or an error immediately.
-// Applications can wait on the CompletedC member channel of the returned
-// RequestState instance to get notified for the outcome of the create snasphot
-// operation. The RequestResult instance returned by the CompletedC channel
-// tells the outcome of the snapshot operation, when successful, the
-// SnapshotIndex method of the returned RequestResult instance reports the index
-// of the created snapshot.
+// Applications can wait on the ResultC() channel of the returned RequestState
+// instance to get notified for the outcome of the create snasphot operation.
+// The RequestResult instance returned by the ResultC() channel tells the
+// outcome of the snapshot operation, when successful, the SnapshotIndex method
+// of the returned RequestResult instance reports the index of the created
+// snapshot.
 //
 // Requested snapshot operation will be rejected if there is already an existing
 // snapshot in the system at the same Raft log index.
@@ -965,7 +966,7 @@ func (nh *NodeHost) RequestSnapshot(clusterID uint64,
 		return nil, ErrClusterNotFound
 	}
 	req, err := v.requestSnapshot(opt, nh.getTimeoutTick(timeout))
-	nh.execEngine.setNodeReady(clusterID)
+	nh.execEngine.setStepReady(clusterID)
 	return req, err
 }
 
@@ -998,7 +999,7 @@ func (nh *NodeHost) RequestCompaction(clusterID uint64,
 		return nil, ErrClusterNotFound
 	}
 	op, err := v.requestCompaction()
-	nh.execEngine.setNodeReady(clusterID)
+	nh.execEngine.setStepReady(clusterID)
 	return op, err
 }
 
@@ -1083,7 +1084,7 @@ func (nh *NodeHost) SyncRequestAddWitness(ctx context.Context,
 // RequestDeleteNode is a Raft cluster membership change method for requesting
 // the specified node to be removed from the specified Raft cluster. It starts
 // an asynchronous request to remove the node from the Raft cluster membership
-// list. Application can wait on the CompletedC member of the returned
+// list. Application can wait on the ResultC() channel of the returned
 // RequestState instance to get notified for the outcome.
 //
 // It is not guaranteed that deleted node will automatically close itself and
@@ -1109,14 +1110,14 @@ func (nh *NodeHost) RequestDeleteNode(clusterID uint64,
 	}
 	tt := nh.getTimeoutTick(timeout)
 	req, err := v.requestDeleteNodeWithOrderID(nodeID, configChangeIndex, tt)
-	nh.execEngine.setNodeReady(clusterID)
+	nh.execEngine.setStepReady(clusterID)
 	return req, err
 }
 
 // RequestAddNode is a Raft cluster membership change method for requesting the
 // specified node to be added to the specified Raft cluster. It starts an
 // asynchronous request to add the node to the Raft cluster membership list.
-// Application can wait on the CompletedC member of the returned RequestState
+// Application can wait on the ResultC() channel of the returned RequestState
 // instance to get notified for the outcome.
 //
 // If there is already an observer with the same nodeID in the cluster, it will
@@ -1145,7 +1146,7 @@ func (nh *NodeHost) RequestAddNode(clusterID uint64,
 	}
 	req, err := v.requestAddNodeWithOrderID(nodeID,
 		address, configChangeIndex, nh.getTimeoutTick(timeout))
-	nh.execEngine.setNodeReady(clusterID)
+	nh.execEngine.setStepReady(clusterID)
 	return req, err
 }
 
@@ -1181,7 +1182,7 @@ func (nh *NodeHost) RequestAddObserver(clusterID uint64,
 	}
 	req, err := v.requestAddObserverWithOrderID(nodeID,
 		address, configChangeIndex, nh.getTimeoutTick(timeout))
-	nh.execEngine.setNodeReady(clusterID)
+	nh.execEngine.setStepReady(clusterID)
 	return req, err
 }
 
@@ -1215,7 +1216,7 @@ func (nh *NodeHost) RequestAddWitness(clusterID uint64,
 	}
 	req, err := v.requestAddWitnessWithOrderID(nodeID,
 		address, configChangeIndex, nh.getTimeoutTick(timeout))
-	nh.execEngine.setNodeReady(clusterID)
+	nh.execEngine.setStepReady(clusterID)
 	return req, err
 }
 
@@ -1234,7 +1235,7 @@ func (nh *NodeHost) RequestLeaderTransfer(clusterID uint64,
 		clusterID, targetNodeID)
 	err := v.requestLeaderTransfer(targetNodeID)
 	if err == nil {
-		nh.execEngine.setNodeReady(clusterID)
+		nh.execEngine.setStepReady(clusterID)
 	}
 	return err
 }
@@ -1315,7 +1316,7 @@ func (nh *NodeHost) GetNodeUser(clusterID uint64) (INodeUser, error) {
 	nu := &nodeUser{
 		nh:           nh,
 		node:         v,
-		setNodeReady: nh.execEngine.setNodeReady,
+		setStepReady: nh.execEngine.setStepReady,
 	}
 	return nu, nil
 }
@@ -1352,8 +1353,7 @@ func (nh *NodeHost) GetNodeHostInfo(opt NodeHostInfoOption) *NodeHostInfo {
 }
 
 func (nh *NodeHost) propose(s *client.Session,
-	cmd []byte, handler ICompleteHandler,
-	timeout time.Duration) (*RequestState, error) {
+	cmd []byte, timeout time.Duration) (*RequestState, error) {
 	var st time.Time
 	sampled := delaySampled(s)
 	if sampled {
@@ -1366,8 +1366,8 @@ func (nh *NodeHost) propose(s *client.Session,
 	if !v.supportClientSession() && !s.IsNoOPSession() {
 		plog.Panicf("IOnDiskStateMachine based nodes must use NoOPSession")
 	}
-	req, err := v.propose(s, cmd, handler, nh.getTimeoutTick(timeout))
-	nh.execEngine.setNodeReady(s.ClusterID)
+	req, err := v.propose(s, cmd, nh.getTimeoutTick(timeout))
+	nh.execEngine.setStepReady(s.ClusterID)
 	if sampled {
 		nh.execEngine.proposeDelay(s.ClusterID, st)
 	}
@@ -1375,17 +1375,16 @@ func (nh *NodeHost) propose(s *client.Session,
 }
 
 func (nh *NodeHost) readIndex(clusterID uint64,
-	handler ICompleteHandler,
 	timeout time.Duration) (*RequestState, *node, error) {
 	n, ok := nh.getClusterNotLocked(clusterID)
 	if !ok {
 		return nil, nil, ErrClusterNotFound
 	}
-	req, err := n.read(handler, nh.getTimeoutTick(timeout))
+	req, err := n.read(nh.getTimeoutTick(timeout))
 	if err != nil {
 		return nil, nil, err
 	}
-	nh.execEngine.setNodeReady(clusterID)
+	nh.execEngine.setStepReady(clusterID)
 	return req, n, err
 }
 
@@ -1396,12 +1395,12 @@ func (nh *NodeHost) linearizableRead(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	rs, node, err := nh.readIndex(clusterID, nil, timeout)
+	rs, node, err := nh.readIndex(clusterID, timeout)
 	if err != nil {
 		return nil, err
 	}
 	select {
-	case s := <-rs.CompletedC:
+	case s := <-rs.AppliedC():
 		if s.Timeout() {
 			return nil, ErrTimeout
 		} else if s.Completed() {
@@ -1600,6 +1599,7 @@ func (nh *NodeHost) startCluster(initialMembers map[uint64]string,
 		nh.rsPool[nodeID%rsPoolSize],
 		config,
 		nh.nhConfig.EnableMetrics,
+		nh.nhConfig.NotifyCommit,
 		nh.nhConfig.RTTMillisecond,
 		nh.logdb,
 		nh.sysUserListener)
@@ -1609,7 +1609,7 @@ func (nh *NodeHost) startCluster(initialMembers map[uint64]string,
 	nh.clusterMu.clusters.Store(clusterID, rn)
 	nh.clusterMu.requests[clusterID] = queue
 	nh.clusterMu.csi++
-	nh.execEngine.setTaskReady(clusterID)
+	nh.execEngine.setApplyReady(clusterID)
 	return nil
 }
 
@@ -1621,6 +1621,9 @@ func (nh *NodeHost) createPools() {
 			obj := &RequestState{}
 			obj.CompletedC = make(chan RequestResult, 1)
 			obj.pool = p
+			if nh.nhConfig.NotifyCommit {
+				obj.committedC = make(chan RequestResult, 1)
+			}
 			return obj
 		}
 		nh.rsPool[i] = p
@@ -1636,8 +1639,9 @@ func (nh *NodeHost) createLogDB(cfg config.NodeHostConfig, did uint64) error {
 		return err
 	}
 	var factory config.LogDBFactoryFunc
-	df := func(dirs []string, lows []string) (raftio.ILogDB, error) {
-		return logdb.NewDefaultLogDB(dirs, lows, nh.fs)
+	df := func(config config.LogDBConfig,
+		dirs []string, lows []string) (raftio.ILogDB, error) {
+		return logdb.NewDefaultLogDB(config, dirs, lows, nh.fs)
 	}
 	if cfg.LogDBFactory != nil {
 		factory = cfg.LogDBFactory
@@ -1645,14 +1649,14 @@ func (nh *NodeHost) createLogDB(cfg config.NodeHostConfig, did uint64) error {
 		factory = df
 	}
 	// create a tmp logdb to get LogDB type info
-	name, err := logdb.GetLogDBInfo(factory, nhDirs, nh.fs)
+	name, err := logdb.GetLogDBInfo(factory, nh.nhConfig.LogDBConfig, nhDirs, nh.fs)
 	if err != nil {
 		return err
 	}
 	if err := nh.serverCtx.CheckLogDBType(did, name); err != nil {
 		return err
 	}
-	ldb, err := factory(nhDirs, walDirs)
+	ldb, err := factory(nh.nhConfig.LogDBConfig, nhDirs, walDirs)
 	if err != nil {
 		return err
 	}
@@ -1671,6 +1675,7 @@ func (nh *NodeHost) createLogDB(cfg config.NodeHostConfig, did uint64) error {
 			return server.ErrLogDBBrokenChange
 		}
 	}
+	plog.Infof("logdb memory limit: %dMBytes", cfg.LogDBConfig.MemorySizeMB())
 	return nil
 }
 
@@ -1845,7 +1850,7 @@ func (nh *NodeHost) sendTickMessage(clusters []*node,
 			continue
 		}
 		q.Add(m)
-		nh.execEngine.setNodeReady(n.clusterID)
+		nh.execEngine.setStepReady(n.clusterID)
 	}
 }
 
@@ -1916,7 +1921,7 @@ func (nh *NodeHost) pushSnapshotStatus(clusterID uint64,
 		}
 		added, stopped := q.Add(m)
 		if added {
-			nh.execEngine.setNodeReady(clusterID)
+			nh.execEngine.setStepReady(clusterID)
 			plog.Infof("%s just got snapshot status", dn(clusterID, nodeID))
 			return true
 		}
@@ -1980,7 +1985,7 @@ func (nh *NodeHost) logTransportLatency() {
 func checkRequestState(ctx context.Context,
 	rs *RequestState) (sm.Result, error) {
 	select {
-	case r := <-rs.CompletedC:
+	case r := <-rs.AppliedC():
 		if r.Completed() {
 			return r.GetResult(), nil
 		} else if r.Rejected() {
@@ -2031,7 +2036,7 @@ func delaySampled(s *client.Session) bool {
 type nodeUser struct {
 	nh           *NodeHost
 	node         *node
-	setNodeReady func(clusterID uint64)
+	setStepReady func(clusterID uint64)
 }
 
 func (nu *nodeUser) Propose(s *client.Session,
@@ -2041,8 +2046,8 @@ func (nu *nodeUser) Propose(s *client.Session,
 	if sampled {
 		st = time.Now()
 	}
-	req, err := nu.node.propose(s, cmd, nil, nu.nh.getTimeoutTick(timeout))
-	nu.setNodeReady(s.ClusterID)
+	req, err := nu.node.propose(s, cmd, nu.nh.getTimeoutTick(timeout))
+	nu.setStepReady(s.ClusterID)
 	if sampled {
 		nu.nh.execEngine.proposeDelay(s.ClusterID, st)
 	}
@@ -2050,7 +2055,7 @@ func (nu *nodeUser) Propose(s *client.Session,
 }
 
 func (nu *nodeUser) ReadIndex(timeout time.Duration) (*RequestState, error) {
-	rs, err := nu.node.read(nil, nu.nh.getTimeoutTick(timeout))
+	rs, err := nu.node.read(nu.nh.getTimeoutTick(timeout))
 	return rs, err
 }
 
@@ -2120,7 +2125,7 @@ func (h *messageHandler) HandleMessageBatch(msg pb.MessageBatch) (uint64, uint64
 					msgCount++
 				}
 			}
-			nh.execEngine.setNodeReady(req.ClusterId)
+			nh.execEngine.setStepReady(req.ClusterId)
 		}
 	}
 	return snapshotCount, msgCount
@@ -2149,7 +2154,7 @@ func (h *messageHandler) HandleUnreachable(clusterID uint64, nodeID uint64) {
 	_, q, ok := h.nh.getClusterAndQueueNotLocked(clusterID)
 	if ok {
 		q.MustAdd(pb.Message{Type: pb.Unreachable, From: nodeID})
-		h.nh.execEngine.setNodeReady(clusterID)
+		h.nh.execEngine.setStepReady(clusterID)
 	}
 }
 

@@ -120,6 +120,9 @@ type soft struct {
 	// NodeReloadMillisecond defines how often step engine should reload
 	// nodes, it is defined in number of millisecond.
 	NodeReloadMillisecond uint64
+	// StepEngineCommitWorkerCountis the number of workers to use to notify
+	// committed proposals.
+	StepEngineCommitWorkerCount uint64
 	// StepEngineTaskWorkerCount is the number of workers to use to apply
 	// proposals (processing committed proposals) to application state
 	// machines.
@@ -163,24 +166,7 @@ type soft struct {
 	//
 	// LogDB
 	//
-	KVKeepLogFileNum                   uint64
-	KVMaxBackgroundCompactions         uint64
-	KVMaxBackgroundFlushes             uint64
-	KVLRUCacheSize                     uint64
-	KVWriteBufferSize                  uint64
-	KVMaxWriteBufferNumber             uint64
-	KVLevel0FileNumCompactionTrigger   uint64
-	KVLevel0SlowdownWritesTrigger      uint64
-	KVLevel0StopWritesTrigger          uint64
-	KVMaxBytesForLevelBase             uint64
-	KVMaxBytesForLevelMultiplier       uint64
-	KVTargetFileSizeBase               uint64
-	KVTargetFileSizeMultiplier         uint64
-	KVLevelCompactionDynamicLevelBytes uint64
-	KVRecycleLogFileNum                uint64
-	KVNumOfLevels                      uint64
-	KVBlockSize                        uint64
-	KVTolerateCorruptedTailRecords     bool
+	KVTolerateCorruptedTailRecords bool
 	// KVUseUniversalCompaction defines whether to use universal compaction to
 	// reduce write amplification. This setting is default to false, change it to
 	// true for existing system might cause unexpected consequences, please check
@@ -198,54 +184,38 @@ func getSoftSettings() soft {
 
 func getDefaultSoftSettings() soft {
 	return soft{
-		MaxConcurrentStreamingSnapshot:     128,
-		MaxSnapshotConnections:             64,
-		SyncTaskInterval:                   180000,
-		PanicOnSizeMismatch:                true,
-		LazyFreeCycle:                      1,
-		LatencySampleRatio:                 0,
-		BatchedEntryApply:                  true,
-		GetConnectedTimeoutSecond:          5,
-		MaxEntrySize:                       MaxMessageBatchSize,
-		InMemGCTimeout:                     100,
-		InMemEntrySliceSize:                512,
-		MinEntrySliceFreeSize:              96,
-		IncomingReadIndexQueueLength:       4096,
-		IncomingProposalQueueLength:        2048,
-		SnapshotStatusPushDelayMS:          1000,
-		PendingProposalShards:              16,
-		TaskQueueInitialCap:                64,
-		TaskQueueTargetLength:              1024,
-		NodeHostSyncPoolSize:               8,
-		TaskBatchSize:                      512,
-		NodeReloadMillisecond:              200,
-		StepEngineTaskWorkerCount:          16,
-		StepEngineSnapshotWorkerCount:      64,
-		SendQueueLength:                    1024 * 2,
-		ReceiveQueueLength:                 1024,
-		StreamConnections:                  4,
-		PerConnectionSendBufSize:           LargeEntitySize,
-		PerConnectionRecvBufSize:           2 * 1024 * 1024,
-		SnapshotGCTick:                     30,
-		SnapshotChunkTimeoutTick:           900,
-		KVMaxBackgroundCompactions:         2,
-		KVMaxBackgroundFlushes:             2,
-		KVLRUCacheSize:                     0,
-		KVKeepLogFileNum:                   16,
-		KVWriteBufferSize:                  256 * 1024 * 1024,
-		KVMaxWriteBufferNumber:             8,
-		KVLevel0FileNumCompactionTrigger:   8,
-		KVLevel0SlowdownWritesTrigger:      17,
-		KVLevel0StopWritesTrigger:          24,
-		KVMaxBytesForLevelBase:             4 * 1024 * 1024 * 1024,
-		KVMaxBytesForLevelMultiplier:       2,
-		KVTargetFileSizeBase:               16 * 1024 * 1024,
-		KVTargetFileSizeMultiplier:         2,
-		KVLevelCompactionDynamicLevelBytes: 0,
-		KVRecycleLogFileNum:                0,
-		KVNumOfLevels:                      7,
-		KVBlockSize:                        32 * 1024,
-		KVTolerateCorruptedTailRecords:     true,
-		KVUseUniversalCompaction:           false,
+		MaxConcurrentStreamingSnapshot: 128,
+		MaxSnapshotConnections:         64,
+		SyncTaskInterval:               180000,
+		PanicOnSizeMismatch:            true,
+		LazyFreeCycle:                  1,
+		LatencySampleRatio:             0,
+		BatchedEntryApply:              true,
+		GetConnectedTimeoutSecond:      5,
+		MaxEntrySize:                   MaxMessageBatchSize,
+		InMemGCTimeout:                 100,
+		InMemEntrySliceSize:            512,
+		MinEntrySliceFreeSize:          96,
+		IncomingReadIndexQueueLength:   4096,
+		IncomingProposalQueueLength:    2048,
+		SnapshotStatusPushDelayMS:      1000,
+		PendingProposalShards:          16,
+		TaskQueueInitialCap:            64,
+		TaskQueueTargetLength:          1024,
+		NodeHostSyncPoolSize:           8,
+		TaskBatchSize:                  512,
+		NodeReloadMillisecond:          200,
+		StepEngineCommitWorkerCount:    16,
+		StepEngineTaskWorkerCount:      16,
+		StepEngineSnapshotWorkerCount:  64,
+		SendQueueLength:                1024 * 2,
+		ReceiveQueueLength:             1024,
+		StreamConnections:              4,
+		PerConnectionSendBufSize:       2 * 1024 * 1024,
+		PerConnectionRecvBufSize:       2 * 1024 * 1024,
+		SnapshotGCTick:                 30,
+		SnapshotChunkTimeoutTick:       900,
+		KVTolerateCorruptedTailRecords: true,
+		KVUseUniversalCompaction:       false,
 	}
 }

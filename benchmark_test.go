@@ -129,13 +129,13 @@ func benchmarkProposeN(b *testing.B, sz int) {
 	total := uint64(0)
 	q := newEntryQueue(2048, 0)
 	cfg := config.Config{ClusterID: 1, NodeID: 1}
-	pp := newPendingProposal(cfg, p, q, "localhost:9090")
+	pp := newPendingProposal(cfg, false, p, q, "localhost:9090")
 	session := client.NewNoOPSession(1, random.LockGuardedRand)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			v := atomic.AddUint64(&total, 1)
 			b.SetBytes(int64(sz))
-			rs, err := pp.propose(session, data, nil, 100)
+			rs, err := pp.propose(session, data, 100)
 			if err != nil {
 				b.Errorf("%v", err)
 			}
@@ -173,7 +173,7 @@ func BenchmarkPendingProposalNextKey(b *testing.B) {
 	}
 	q := newEntryQueue(2048, 0)
 	cfg := config.Config{ClusterID: 1, NodeID: 1}
-	pp := newPendingProposal(cfg, p, q, "localhost:9090")
+	pp := newPendingProposal(cfg, false, p, q, "localhost:9090")
 	b.RunParallel(func(pb *testing.PB) {
 		clientID := rand.Uint64()
 		for pb.Next() {
@@ -197,7 +197,7 @@ func BenchmarkReadIndexRead(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			v := atomic.AddUint64(&total, 1)
-			rs, err := pri.read(nil, 100)
+			rs, err := pri.read(100)
 			if err != nil {
 				b.Errorf("%v", err)
 			}

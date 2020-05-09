@@ -45,8 +45,9 @@ var (
 )
 
 type engine interface {
-	setNodeReady(clusterID uint64)
-	setTaskReady(clusterID uint64)
+	setStepReady(clusterID uint64)
+	setCommitReady(clusterID uint64)
+	setApplyReady(clusterID uint64)
 	setStreamReady(clusterID uint64)
 	setRequestedSnapshotReady(clusterID uint64)
 	setAvailableSnapshotReady(clusterID uint64)
@@ -62,7 +63,8 @@ type node struct {
 	config                config.Config
 	confChangeC           <-chan configChangeRequest
 	snapshotC             <-chan rsm.SSRequest
-	taskQ                 *rsm.TaskQueue
+	toApplyQ              *rsm.TaskQueue
+	toCommitQ             *rsm.TaskQueue
 	mq                    *server.MessageQueue
 	smAppliedIndex        uint64
 	confirmedIndex        uint64
@@ -92,6 +94,7 @@ type node struct {
 	expireNotified        uint64
 	tickMillisecond       uint64
 	syncTask              *task
+	notifyCommit          bool
 	rateLimited           bool
 	new                   bool
 	closeOnce             sync.Once
@@ -125,6 +128,7 @@ func newNode(raftAddress string,
 	requestStatePool *sync.Pool,
 	config config.Config,
 	useMetrics bool,
+	notifyCommit bool,
 	tickMillisecond uint64,
 	ldb raftio.ILogDB,
 	sysEvents *sysEventListener) (*node, error) {
@@ -132,10 +136,11 @@ func newNode(raftAddress string,
 	readIndexes := newReadIndexQueue(incomingReadIndexMaxLen)
 	confChangeC := make(chan configChangeRequest, 1)
 	snapshotC := make(chan rsm.SSRequest, 1)
-	pp := newPendingProposal(config, requestStatePool, proposals, raftAddress)
+	pp := newPendingProposal(config,
+		notifyCommit, requestStatePool, proposals, raftAddress)
 	leaderTransfer := newPendingLeaderTransfer()
 	pscr := newPendingReadIndex(requestStatePool, readIndexes)
-	pcc := newPendingConfigChange(confChangeC)
+	pcc := newPendingConfigChange(confChangeC, notifyCommit)
 	ps := newPendingSnapshot(snapshotC)
 	lr := logdb.NewLogReader(config.ClusterID, config.NodeID, ldb)
 	rn := &node{
@@ -167,6 +172,7 @@ func newNode(raftAddress string,
 		syncTask:              newTask(syncTaskInterval),
 		smType:                smType,
 		sysEvents:             sysEvents,
+		notifyCommit:          notifyCommit,
 		quiesceManager: quiesceManager{
 			electionTick: config.ElectionRTT * 2,
 			enabled:      config.Quiesce,
@@ -175,7 +181,10 @@ func newNode(raftAddress string,
 		},
 	}
 	sm := rsm.NewStateMachine(dataStore, snapshotter, config, rn, snapshotter.fs)
-	rn.taskQ = sm.TaskQ()
+	if notifyCommit {
+		rn.toCommitQ = rsm.NewTaskQueue()
+	}
+	rn.toApplyQ = sm.TaskQ()
 	rn.sm = sm
 	rn.raftEvents = newRaftEventListener(config.ClusterID,
 		config.NodeID, &rn.leaderID, useMetrics, liQueue)
@@ -199,8 +208,8 @@ func (n *node) ShouldStop() <-chan struct{} {
 	return n.stopc
 }
 
-func (n *node) NodeReady() {
-	n.engine.setNodeReady(n.clusterID)
+func (n *node) StepReady() {
+	n.engine.setStepReady(n.clusterID)
 }
 
 func (n *node) ApplyUpdate(entry pb.Entry,
@@ -344,14 +353,14 @@ func (n *node) OnDiskStateMachine() bool {
 }
 
 func (n *node) proposeSession(session *client.Session,
-	handler ICompleteHandler, timeoutTick uint64) (*RequestState, error) {
+	timeoutTick uint64) (*RequestState, error) {
 	if n.isWitness() {
 		return nil, ErrInvalidOperation
 	}
 	if !session.ValidForSessionOp(n.clusterID) {
 		return nil, ErrInvalidSession
 	}
-	return n.pendingProposals.propose(session, nil, handler, timeoutTick)
+	return n.pendingProposals.propose(session, nil, timeoutTick)
 }
 
 func (n *node) payloadTooBig(sz int) bool {
@@ -362,8 +371,7 @@ func (n *node) payloadTooBig(sz int) bool {
 }
 
 func (n *node) propose(session *client.Session,
-	cmd []byte, handler ICompleteHandler,
-	timeoutTick uint64) (*RequestState, error) {
+	cmd []byte, timeoutTick uint64) (*RequestState, error) {
 	if n.isWitness() {
 		return nil, ErrInvalidOperation
 	}
@@ -373,15 +381,14 @@ func (n *node) propose(session *client.Session,
 	if n.payloadTooBig(len(cmd)) {
 		return nil, ErrPayloadTooBig
 	}
-	return n.pendingProposals.propose(session, cmd, handler, timeoutTick)
+	return n.pendingProposals.propose(session, cmd, timeoutTick)
 }
 
-func (n *node) read(handler ICompleteHandler,
-	timeoutTick uint64) (*RequestState, error) {
+func (n *node) read(timeoutTick uint64) (*RequestState, error) {
 	if n.isWitness() {
 		return nil, ErrInvalidOperation
 	}
-	rs, err := n.pendingReadIndexes.read(handler, timeoutTick)
+	rs, err := n.pendingReadIndexes.read(timeoutTick)
 	if err == nil {
 		rs.node = n
 	}
@@ -397,13 +404,13 @@ func (n *node) requestLeaderTransfer(nodeID uint64) error {
 
 func (n *node) requestSnapshot(opt SnapshotOption,
 	timeoutTick uint64) (*RequestState, error) {
-	st := rsm.UserRequestedSnapshot
+	st := rsm.UserRequested
 	if n.isWitness() {
 		return nil, ErrInvalidOperation
 	}
 	if opt.Exported {
 		plog.Infof("%s called export snapshot", n.id())
-		st = rsm.ExportedSnapshot
+		st = rsm.Exported
 		exist, err := fileutil.Exist(opt.ExportPath, n.snapshotter.fs)
 		if err != nil {
 			return nil, err
@@ -512,8 +519,13 @@ func (n *node) entriesToApply(ents []pb.Entry) (newents []pb.Entry) {
 }
 
 func (n *node) pushTask(rec rsm.Task) bool {
-	n.taskQ.Add(rec)
-	n.engine.setTaskReady(n.clusterID)
+	if !n.notifyCommit {
+		n.toApplyQ.Add(rec)
+		n.engine.setApplyReady(n.clusterID)
+	} else {
+		n.toCommitQ.Add(rec)
+		n.engine.setCommitReady(n.clusterID)
+	}
 	return !n.stopped()
 }
 
@@ -639,8 +651,7 @@ func saveSnapshotAborted(err error) bool {
 func (n *node) doSaveSnapshot(req rsm.SSRequest) (uint64, error) {
 	n.snapshotLock.Lock()
 	defer n.snapshotLock.Unlock()
-	if !req.IsExportedSnapshot() &&
-		n.sm.GetLastApplied() <= n.ss.getSnapshotIndex() {
+	if !req.Exported() && n.sm.GetLastApplied() <= n.ss.getSnapshotIndex() {
 		// a snapshot has been pushed to the sm but not applied yet
 		// or the snapshot has been applied and there is no further progress
 		return 0, nil
@@ -675,7 +686,7 @@ func (n *node) doSaveSnapshot(req rsm.SSRequest) (uint64, error) {
 		}
 		return 0, err
 	}
-	if req.IsExportedSnapshot() {
+	if req.Exported() {
 		return ss.Index, nil
 	}
 	if !ss.Validate(n.snapshotter.fs) {
@@ -787,12 +798,12 @@ func (n *node) recoverFromSnapshot(rec rsm.Task) (uint64, error) {
 
 func (n *node) streamSnapshotDone() {
 	n.ss.notifySnapshotStatus(false, false, true, false, 0)
-	n.engine.setTaskReady(n.clusterID)
+	n.engine.setApplyReady(n.clusterID)
 }
 
 func (n *node) saveSnapshotDone() {
 	n.ss.notifySnapshotStatus(true, false, false, false, 0)
-	n.engine.setTaskReady(n.clusterID)
+	n.engine.setApplyReady(n.clusterID)
 }
 
 func (n *node) recoverFromSnapshotDone(index uint64) {
@@ -805,12 +816,12 @@ func (n *node) recoverFromSnapshotDone(index uint64) {
 
 func (n *node) initialSnapshotDone(index uint64) {
 	n.ss.notifySnapshotStatus(false, true, false, true, index)
-	n.engine.setTaskReady(n.clusterID)
+	n.engine.setApplyReady(n.clusterID)
 }
 
 func (n *node) doRecoverFromSnapshotDone() {
 	n.ss.notifySnapshotStatus(false, true, false, false, 0)
-	n.engine.setTaskReady(n.clusterID)
+	n.engine.setApplyReady(n.clusterID)
 }
 
 func (n *node) handleTask(ts []rsm.Task, es []sm.Entry) (rsm.Task, error) {
@@ -998,6 +1009,27 @@ func (n *node) processDroppedEntries(ud pb.Update) {
 	}
 }
 
+func (n *node) notifyCommittedEntries() {
+	tasks := n.toCommitQ.GetAll()
+	for _, t := range tasks {
+		for _, e := range t.Entries {
+			if e.Type == pb.ApplicationEntry ||
+				e.Type == pb.EncodedEntry ||
+				e.Type == pb.MetadataEntry {
+				n.pendingProposals.committed(e.ClientID, e.SeriesID, e.Key)
+			} else if e.Type == pb.ConfigChangeEntry {
+				n.pendingConfigChange.committed(e.Key)
+			} else {
+				plog.Panicf("unknown committed entry type %s", e.Type)
+			}
+		}
+		n.toApplyQ.Add(t)
+	}
+	if len(tasks) > 0 {
+		n.engine.setApplyReady(n.clusterID)
+	}
+}
+
 func (n *node) processReadyToRead(ud pb.Update) {
 	if len(ud.ReadyToReads) > 0 {
 		n.pendingReadIndexes.addReadyToRead(ud.ReadyToReads)
@@ -1058,7 +1090,7 @@ func (n *node) commitRaftUpdate(ud pb.Update) {
 }
 
 func (n *node) canHaveMoreEntriesToApply() bool {
-	return n.taskQ.MoreEntryToApply()
+	return n.toApplyQ.MoreEntryToApply()
 }
 
 func (n *node) hasEntryToApply() bool {
@@ -1147,7 +1179,7 @@ func (n *node) handleSnapshotRequest(lastApplied uint64) bool {
 		return false
 	}
 	si := n.ss.getReqSnapshotIndex()
-	if !req.IsExportedSnapshot() && lastApplied == si {
+	if !req.Exported() && lastApplied == si {
 		n.reportIgnoredSnapshotRequest(req.Key)
 		return false
 	}

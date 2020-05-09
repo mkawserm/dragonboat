@@ -127,7 +127,13 @@ func (rr *RequestResult) Timeout() bool {
 	return rr.code == requestTimeout
 }
 
-// Completed returns a boolean value indicating the request request completed
+// Committed returns a boolean value indicating whether the request has been
+// committed by Raft.
+func (rr *RequestResult) Committed() bool {
+	return rr.code == requestCompleted || rr.code == requestCommitted
+}
+
+// Completed returns a boolean value indicating whether the request completed
 // successfully. For proposals, it means the proposal has been committed by the
 // Raft cluster and applied on the local node. For ReadIndex operation, it means
 // the cluster is now ready for a local read.
@@ -170,7 +176,7 @@ func (rr *RequestResult) Dropped() bool {
 // RequestResult instances not related to snapshots will cause panic.
 func (rr *RequestResult) SnapshotIndex() uint64 {
 	if !rr.snapshotResult {
-		panic("not a snapshot request result")
+		plog.Panicf("not a snapshot request result")
 	}
 	return rr.result.Value
 }
@@ -189,6 +195,7 @@ const (
 	requestRejected
 	requestDropped
 	requestAborted
+	requestCommitted
 )
 
 var requestResultCodeName = [...]string{
@@ -198,28 +205,11 @@ var requestResultCodeName = [...]string{
 	"RequestRejected",
 	"RequestDropped",
 	"RequestAborted",
+	"RequestCommitted",
 }
 
 func (c RequestResultCode) String() string {
 	return requestResultCodeName[uint64(c)]
-}
-
-func getTerminatedResult() RequestResult {
-	return RequestResult{
-		code: requestTerminated,
-	}
-}
-
-func getTimeoutResult() RequestResult {
-	return RequestResult{
-		code: requestTimeout,
-	}
-}
-
-func getDroppedResult() RequestResult {
-	return RequestResult{
-		code: requestDropped,
-	}
 }
 
 type logicalClock struct {
@@ -234,14 +224,6 @@ func (p *logicalClock) tick() {
 
 func (p *logicalClock) getTick() uint64 {
 	return atomic.LoadUint64(&p.ltick)
-}
-
-// ICompleteHandler is a handler interface that will be invoked when the request
-// in completed. This interface is used by the language bindings, applications
-// are not expected to directly use this interface.
-type ICompleteHandler interface {
-	Notify(RequestResult)
-	Release()
 }
 
 type ready struct {
@@ -268,71 +250,171 @@ type SysOpState struct {
 
 // CompletedC returns a struct{} chan that is closed when the requested
 // operation is completed.
+//
+// Deprecated: CompletedC() has been deprecated. Use ResultC() instead.
 func (o *SysOpState) CompletedC() <-chan struct{} {
+	return o.completedC
+}
+
+// ResultC returns a struct{} chan that is closed when the requested
+// operation is completed.
+func (o *SysOpState) ResultC() <-chan struct{} {
 	return o.completedC
 }
 
 // RequestState is the object used to provide request result to users.
 type RequestState struct {
-	key             uint64
-	clientID        uint64
-	seriesID        uint64
-	respondedTo     uint64
-	deadline        uint64
-	readyToRead     ready
-	readyToRelease  ready
-	completeHandler ICompleteHandler
+	key            uint64
+	clientID       uint64
+	seriesID       uint64
+	respondedTo    uint64
+	deadline       uint64
+	readyToRead    ready
+	readyToRelease ready
+	aggrC          chan RequestResult
+	committedC     chan RequestResult
 	// CompletedC is a channel for delivering request result to users.
-	CompletedC chan RequestResult
-	node       *node
-	pool       *sync.Pool
+	//
+	// Deprecated: CompletedC has been deprecated. Use ResultC() or AppliedC()
+	// instead.
+	CompletedC   chan RequestResult
+	node         *node
+	pool         *sync.Pool
+	notifyCommit bool
+}
+
+// AppliedC returns a channel of RequestResult for delivering request result.
+// The returned channel reports the final outcomes of proposals and config
+// changes, the return value can be of one of the Completed(), Dropped(),
+// Timeout(), Rejected(), Terminated() or Aborted() values.
+//
+// Use ResultC() when the client wants to be notified when proposals or config
+// changes are committed.
+func (r *RequestState) AppliedC() chan RequestResult {
+	return r.CompletedC
+}
+
+// ResultC returns a channel of RequestResult for delivering request results to
+// users. When NotifyCommit is not enabled, the behaviour of the returned
+// channel is the same as the one returned by the AppliedC() method. When
+// NotifyCommit is enabled, up to two RequestResult values can be received from
+// the returned channel. For example, for a successfully proposal that is
+// eventually committed and applied, the returned chan RequestResult will return
+// a RequestResult value to indicate the proposal is committed first, it will be
+// followed by another RequestResult value indicating the proposal has been
+// applied into the state machine.
+//
+// Use AppliedC() when your client don't need extra notification when proposals
+// and config changes are committed.
+func (r *RequestState) ResultC() chan RequestResult {
+	if !r.notifyCommit {
+		return r.CompletedC
+	}
+	if r.committedC == nil {
+		plog.Panicf("committedC is nil")
+	}
+	if r.aggrC != nil {
+		return r.aggrC
+	}
+	r.aggrC = make(chan RequestResult, 2)
+	go func() {
+		select {
+		case cn := <-r.committedC:
+			if cn.code != requestCommitted {
+				plog.Panicf("unknown code, %s", cn.code)
+			}
+			r.aggrC <- cn
+			cc := <-r.CompletedC
+			r.aggrC <- cc
+		case cc := <-r.CompletedC:
+			if cc.Completed() || cc.Terminated() || cc.Timeout() {
+				select {
+				case ccn := <-r.committedC:
+					r.aggrC <- ccn
+				default:
+				}
+				r.aggrC <- cc
+			}
+		}
+	}()
+	return r.aggrC
+}
+
+func (r *RequestState) committed() {
+	if !r.notifyCommit {
+		plog.Panicf("notify commit not enabled")
+	}
+	if r.committedC == nil {
+		plog.Panicf("committedC is nil")
+	}
+	select {
+	case r.committedC <- RequestResult{code: requestCommitted}:
+	default:
+		plog.Panicf("RequestState.committedC is full")
+	}
+}
+
+func (r *RequestState) timeout() {
+	rr := RequestResult{
+		code: requestTimeout,
+	}
+	r.notify(rr)
+}
+
+func (r *RequestState) terminated() {
+	rr := RequestResult{
+		code: requestTerminated,
+	}
+	r.notify(rr)
+}
+
+func (r *RequestState) dropped() {
+	rr := RequestResult{
+		code: requestDropped,
+	}
+	r.notify(rr)
 }
 
 func (r *RequestState) notify(result RequestResult) {
-	r.readyToRelease.set()
-	if r.completeHandler == nil {
-		select {
-		case r.CompletedC <- result:
-		default:
-			plog.Panicf("RequestState.CompletedC is full")
-		}
-	} else {
-		r.completeHandler.Notify(result)
-		r.completeHandler.Release()
-		r.Release()
+	select {
+	case r.CompletedC <- result:
+		r.readyToRelease.set()
+	default:
+		plog.Panicf("RequestState.CompletedC is full")
 	}
 }
 
 // Release puts the RequestState instance back to an internal pool so it can be
-// reused. Release should only be called after RequestResult has been received
-// from the CompletedC channel.
+// reused. Release is normally called after all RequestResult values have been
+// received from the ResultC() channel.
 func (r *RequestState) Release() {
 	if r.pool != nil {
 		if !r.readyToRelease.ready() {
-			panic("RequestState released when never notified")
+			return
 		}
+		r.notifyCommit = false
 		r.deadline = 0
 		r.key = 0
 		r.seriesID = 0
 		r.clientID = 0
 		r.respondedTo = 0
-		r.completeHandler = nil
 		r.node = nil
 		r.readyToRead.clear()
 		r.readyToRelease.clear()
+		r.aggrC = nil
 		r.pool.Put(r)
 	}
 }
 
 func (r *RequestState) mustBeReadyForLocalRead() {
 	if r.node == nil {
-		panic("invalid rs")
+		plog.Panicf("invalid rs")
 	}
 	if !r.node.initialized() {
 		plog.Panicf("%s not initialized", r.node.id())
 	}
 	if !r.readyToRead.ready() {
-		panic("not ready for local read")
+		plog.Panicf("not ready for local read")
 	}
 }
 
@@ -343,6 +425,7 @@ type proposalShard struct {
 	pool           *sync.Pool
 	cfg            config.Config
 	stopped        bool
+	notifyCommit   bool
 	expireNotified uint64
 	logicalClock
 }
@@ -394,9 +477,10 @@ type configChangeRequest struct {
 }
 
 type pendingConfigChange struct {
-	mu          sync.Mutex
-	pending     *RequestState
-	confChangeC chan<- configChangeRequest
+	mu           sync.Mutex
+	pending      *RequestState
+	confChangeC  chan<- configChangeRequest
+	notifyCommit bool
 	logicalClock
 }
 
@@ -441,7 +525,7 @@ func (l *pendingLeaderTransfer) get() (uint64, bool) {
 func newPendingSnapshot(snapshotC chan<- rsm.SSRequest) *pendingSnapshot {
 	gcTick := defaultGCTick
 	if gcTick == 0 {
-		panic("invalid gcTick")
+		plog.Panicf("invalid gcTick")
 	}
 	lcu := logicalClock{gcTick: gcTick}
 	return &pendingSnapshot{
@@ -460,7 +544,7 @@ func (p *pendingSnapshot) close() {
 	defer p.mu.Unlock()
 	p.snapshotC = nil
 	if p.pending != nil {
-		p.notify(getTerminatedResult())
+		p.pending.terminated()
 		p.pending = nil
 	}
 }
@@ -487,9 +571,10 @@ func (p *pendingSnapshot) request(st rsm.SSReqType,
 		CompactionOverhead: overhead,
 	}
 	req := &RequestState{
-		key:        ssreq.Key,
-		deadline:   p.getTick() + timeoutTick,
-		CompletedC: make(chan RequestResult, 1),
+		key:          ssreq.Key,
+		deadline:     p.getTick() + timeoutTick,
+		CompletedC:   make(chan RequestResult, 1),
+		notifyCommit: false,
 	}
 	select {
 	case p.snapshotC <- ssreq:
@@ -512,7 +597,7 @@ func (p *pendingSnapshot) gc() {
 	}
 	p.logicalClock.lastGcTime = now
 	if p.pending.deadline < now {
-		p.notify(getTimeoutResult())
+		p.pending.timeout()
 		p.pending = nil
 	}
 }
@@ -520,7 +605,7 @@ func (p *pendingSnapshot) gc() {
 func (p *pendingSnapshot) apply(key uint64,
 	ignored bool, aborted bool, index uint64) {
 	if ignored && aborted {
-		panic("ignored && aborted")
+		plog.Panicf("ignored && aborted")
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -542,15 +627,17 @@ func (p *pendingSnapshot) apply(key uint64,
 	}
 }
 
-func newPendingConfigChange(confChangeC chan<- configChangeRequest) *pendingConfigChange {
+func newPendingConfigChange(confChangeC chan<- configChangeRequest,
+	notifyCommit bool) *pendingConfigChange {
 	gcTick := defaultGCTick
 	if gcTick == 0 {
-		panic("invalid gcTick")
+		plog.Panicf("invalid gcTick")
 	}
 	lcu := logicalClock{gcTick: gcTick}
 	return &pendingConfigChange{
 		confChangeC:  confChangeC,
 		logicalClock: lcu,
+		notifyCommit: notifyCommit,
 	}
 }
 
@@ -559,7 +646,7 @@ func (p *pendingConfigChange) close() {
 	defer p.mu.Unlock()
 	if p.confChangeC != nil {
 		if p.pending != nil {
-			p.pending.notify(getTerminatedResult())
+			p.pending.terminated()
 			p.pending = nil
 		}
 		close(p.confChangeC)
@@ -582,16 +669,20 @@ func (p *pendingConfigChange) request(cc pb.ConfigChange,
 	}
 	data, err := cc.Marshal()
 	if err != nil {
-		panic(err)
+		plog.Panicf("%v", err)
 	}
 	ccreq := configChangeRequest{
 		key:  random.LockGuardedRand.Uint64(),
 		data: data,
 	}
 	req := &RequestState{
-		key:        ccreq.key,
-		deadline:   p.getTick() + timeoutTick,
-		CompletedC: make(chan RequestResult, 1),
+		key:          ccreq.key,
+		deadline:     p.getTick() + timeoutTick,
+		CompletedC:   make(chan RequestResult, 1),
+		notifyCommit: p.notifyCommit,
+	}
+	if p.notifyCommit {
+		req.committedC = make(chan RequestResult, 1)
 	}
 	select {
 	case p.confChangeC <- ccreq:
@@ -614,8 +705,19 @@ func (p *pendingConfigChange) gc() {
 	}
 	p.logicalClock.lastGcTime = now
 	if p.pending.deadline < now {
-		p.pending.notify(getTimeoutResult())
+		p.pending.timeout()
 		p.pending = nil
+	}
+}
+
+func (p *pendingConfigChange) committed(key uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.pending == nil {
+		return
+	}
+	if p.pending.key == key {
+		p.pending.committed()
 	}
 }
 
@@ -626,7 +728,7 @@ func (p *pendingConfigChange) dropped(key uint64) {
 		return
 	}
 	if p.pending.key == key {
-		p.pending.notify(getDroppedResult())
+		p.pending.dropped()
 		p.pending = nil
 	}
 }
@@ -653,7 +755,7 @@ func newPendingReadIndex(pool *sync.Pool,
 	requests *readIndexQueue) *pendingReadIndex {
 	gcTick := defaultGCTick
 	if gcTick == 0 {
-		panic("invalid gcTick")
+		plog.Panicf("invalid gcTick")
 	}
 	lcu := logicalClock{gcTick: gcTick}
 	p := &pendingReadIndex{
@@ -676,22 +778,21 @@ func (p *pendingReadIndex) close() {
 	if p.requests != nil {
 		p.requests.close()
 		tmp := p.requests.get()
-		for _, v := range tmp {
-			v.notify(getTerminatedResult())
+		for _, rec := range tmp {
+			rec.terminated()
 		}
 	}
-	for _, v := range p.pending {
-		v.notify(getTerminatedResult())
+	for _, rec := range p.pending {
+		rec.terminated()
 	}
 }
 
-func (p *pendingReadIndex) read(handler ICompleteHandler,
-	timeoutTick uint64) (*RequestState, error) {
+func (p *pendingReadIndex) read(timeoutTick uint64) (*RequestState, error) {
 	if timeoutTick == 0 {
 		return nil, ErrTimeoutTooSmall
 	}
 	req := p.pool.Get().(*RequestState)
-	req.completeHandler = handler
+	req.notifyCommit = false
 	req.key = p.nextUserCtx()
 	req.deadline = p.getTick() + timeoutTick
 	if len(req.CompletedC) > 0 {
@@ -763,7 +864,7 @@ func (p *pendingReadIndex) addPendingRead(system pb.SystemCtx,
 	}
 	for _, req := range reqs {
 		if _, ok := p.pending[req.key]; ok {
-			panic("key already in the pending map")
+			plog.Panicf("key already in the pending map")
 		}
 		p.pending[req.key] = req
 		p.mapping[req.key] = system
@@ -781,9 +882,9 @@ func (p *pendingReadIndex) dropped(system pb.SystemCtx) {
 		if val == system {
 			req, ok := p.pending[key]
 			if !ok {
-				panic("inconsistent data")
+				plog.Panicf("inconsistent data")
 			}
-			req.notify(getDroppedResult())
+			req.dropped()
 			delete(p.pending, key)
 			toDelete = append(toDelete, key)
 		}
@@ -810,7 +911,7 @@ func (p *pendingReadIndex) applied(applied uint64) {
 	for userKey, req := range p.pending {
 		systemCtx, ok := p.mapping[userKey]
 		if !ok {
-			panic("mapping is missing")
+			plog.Panicf("mapping is missing")
 		}
 		bindex, bok := p.batches[systemCtx]
 		if !bok || bindex > applied {
@@ -857,7 +958,7 @@ func (p *pendingReadIndex) gc(now uint64) {
 		toDelete := make([]uint64, 0)
 		for userKey, req := range p.pending {
 			if req.deadline < now {
-				req.notify(getTimeoutResult())
+				req.timeout()
 				toDelete = append(toDelete, userKey)
 			}
 		}
@@ -876,14 +977,14 @@ func getRandomGenerator(clusterID uint64,
 		pid, nano, clusterID, nodeID, addr, partition)
 	m := sha512.New()
 	if _, err := io.WriteString(m, seedStr); err != nil {
-		panic(err)
+		plog.Panicf("%v", err)
 	}
 	sum := m.Sum(nil)
 	seed := binary.LittleEndian.Uint64(sum)
 	return &keyGenerator{rand: rand.New(rand.NewSource(int64(seed)))}
 }
 
-func newPendingProposal(cfg config.Config,
+func newPendingProposal(cfg config.Config, notifyCommit bool,
 	pool *sync.Pool, proposals *entryQueue, raftAddress string) *pendingProposal {
 	ps := pendingProposalShards
 	p := &pendingProposal{
@@ -892,24 +993,29 @@ func newPendingProposal(cfg config.Config,
 		ps:     ps,
 	}
 	for i := uint64(0); i < ps; i++ {
-		p.shards[i] = newPendingProposalShard(cfg, pool, proposals)
+		p.shards[i] = newPendingProposalShard(cfg, notifyCommit, pool, proposals)
 		p.keyg[i] = getRandomGenerator(cfg.ClusterID, cfg.NodeID, raftAddress, i)
 	}
 	return p
 }
 
 func (p *pendingProposal) propose(session *client.Session,
-	cmd []byte, handler ICompleteHandler,
-	timeoutTick uint64) (*RequestState, error) {
+	cmd []byte, timeoutTick uint64) (*RequestState, error) {
 	key := p.nextKey(session.ClientID)
 	pp := p.shards[key%p.ps]
-	return pp.propose(session, cmd, key, handler, timeoutTick)
+	return pp.propose(session, cmd, key, timeoutTick)
 }
 
 func (p *pendingProposal) close() {
 	for _, pp := range p.shards {
 		pp.close()
 	}
+}
+
+func (p *pendingProposal) committed(clientID uint64,
+	seriesID uint64, key uint64) {
+	pp := p.shards[key%p.ps]
+	pp.committed(clientID, seriesID, key)
 }
 
 func (p *pendingProposal) dropped(clientID uint64,
@@ -941,11 +1047,11 @@ func (p *pendingProposal) gc() {
 	}
 }
 
-func newPendingProposalShard(cfg config.Config, pool *sync.Pool,
-	proposals *entryQueue) *proposalShard {
+func newPendingProposalShard(cfg config.Config,
+	notifyCommit bool, pool *sync.Pool, proposals *entryQueue) *proposalShard {
 	gcTick := defaultGCTick
 	if gcTick == 0 {
-		panic("invalid gcTick")
+		plog.Panicf("invalid gcTick")
 	}
 	lcu := logicalClock{gcTick: gcTick}
 	p := &proposalShard{
@@ -954,13 +1060,13 @@ func newPendingProposalShard(cfg config.Config, pool *sync.Pool,
 		logicalClock: lcu,
 		pool:         pool,
 		cfg:          cfg,
+		notifyCommit: notifyCommit,
 	}
 	return p
 }
 
 func (p *proposalShard) propose(session *client.Session,
-	cmd []byte, key uint64, handler ICompleteHandler,
-	timeoutTick uint64) (*RequestState, error) {
+	cmd []byte, key uint64, timeoutTick uint64) (*RequestState, error) {
 	if timeoutTick == 0 {
 		return nil, ErrTimeoutTooSmall
 	}
@@ -982,11 +1088,21 @@ func (p *proposalShard) propose(session *client.Session,
 	req := p.pool.Get().(*RequestState)
 	req.clientID = session.ClientID
 	req.seriesID = session.SeriesID
-	req.completeHandler = handler
 	req.key = entry.Key
 	req.deadline = p.getTick() + timeoutTick
+	req.notifyCommit = p.notifyCommit
+	if req.aggrC != nil {
+		plog.Panicf("aggrC not nil")
+	}
 	if len(req.CompletedC) > 0 {
 		req.CompletedC = make(chan RequestResult, 1)
+	}
+	if p.notifyCommit {
+		if len(req.committedC) > 0 || req.committedC == nil {
+			req.committedC = make(chan RequestResult, 1)
+		}
+	} else {
+		req.committedC = nil
 	}
 
 	p.mu.Lock()
@@ -1028,13 +1144,23 @@ func (p *proposalShard) close() {
 	if p.proposals != nil {
 		p.proposals.close()
 	}
-	for _, c := range p.pending {
-		c.notify(getTerminatedResult())
+	for _, rec := range p.pending {
+		rec.terminated()
 	}
 }
 
 func (p *proposalShard) getProposal(clientID uint64,
 	seriesID uint64, key uint64, now uint64) *RequestState {
+	return p.takeProposal(clientID, seriesID, key, now, true)
+}
+
+func (p *proposalShard) borrowProposal(clientID uint64,
+	seriesID uint64, key uint64, now uint64) *RequestState {
+	return p.takeProposal(clientID, seriesID, key, now, false)
+}
+
+func (p *proposalShard) takeProposal(clientID uint64,
+	seriesID uint64, key uint64, now uint64, remove bool) *RequestState {
 	p.mu.Lock()
 	if p.stopped {
 		p.mu.Unlock()
@@ -1043,7 +1169,9 @@ func (p *proposalShard) getProposal(clientID uint64,
 	ps, ok := p.pending[key]
 	if ok && ps.deadline >= now {
 		if ps.clientID == clientID && ps.seriesID == seriesID {
-			delete(p.pending, key)
+			if remove {
+				delete(p.pending, key)
+			}
 			p.mu.Unlock()
 			return ps
 		}
@@ -1052,11 +1180,19 @@ func (p *proposalShard) getProposal(clientID uint64,
 	return nil
 }
 
+func (p *proposalShard) committed(clientID uint64, seriesID uint64, key uint64) {
+	tick := p.getTick()
+	ps := p.borrowProposal(clientID, seriesID, key, tick)
+	if ps != nil {
+		ps.committed()
+	}
+}
+
 func (p *proposalShard) dropped(clientID uint64, seriesID uint64, key uint64) {
 	tick := p.getTick()
 	ps := p.getProposal(clientID, seriesID, key, tick)
 	if ps != nil {
-		ps.notify(getDroppedResult())
+		ps.dropped()
 	}
 }
 
@@ -1095,9 +1231,9 @@ func (p *proposalShard) gcAt(now uint64) {
 	}
 	p.lastGcTime = now
 	deletedKeys := make(map[uint64]bool)
-	for key, pRec := range p.pending {
-		if pRec.deadline < now {
-			pRec.notify(getTimeoutResult())
+	for key, rec := range p.pending {
+		if rec.deadline < now {
+			rec.timeout()
 			deletedKeys[key] = true
 		}
 	}

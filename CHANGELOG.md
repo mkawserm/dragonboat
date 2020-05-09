@@ -1,3 +1,18 @@
+## v3.3 (TBD)
+
+Dragonboat v3.3 comes with new features and improvements. All v3.2.x users are recommended to upgrade.
+
+### New features
+
+- Pebble has been made the default LogDB storage engine.
+- Added the option to get notified when proposals and config changes are committed.
+
+### Breaking changes
+
+- The signature of config.LogDBFactoryFunc has been changed. Your application is not affected unless it uses a custom LogDB implementation.
+- C++ binding is no longer supported.
+- LevelDB based LogDB is no longer supported.
+
 ## v3.2 (2020-03-05)
 
 Dragonboat v3.2 comes with new features and improvements. All v3.1.x users are recommended to upgrade. 

@@ -354,7 +354,7 @@ func TestLogDBCanBeExtended(t *testing.T) {
 	tf := func() {
 		c := getTestNodeHostConfig(fs)
 		ldb := &noopLogDB{}
-		c.LogDBFactory = func([]string, []string) (raftio.ILogDB, error) {
+		c.LogDBFactory = func(config.LogDBConfig, []string, []string) (raftio.ILogDB, error) {
 			return ldb, nil
 		}
 		nh, err := NewNodeHost(*c)
@@ -571,11 +571,25 @@ func createSingleNodeTestNodeHost(addr string,
 		SnapshotEntries:    10,
 		CompactionOverhead: 5,
 	}
-	return createSingleNodeTestNodeHostCfg(addr, datadir, slowSave, rc, compress, fs)
+	return createSingleNodeTestNodeHostCfg(addr, datadir, slowSave, false, rc, compress, fs)
+}
+
+func createNotifyCommitNodeHost(addr string,
+	datadir string, slowSave bool, compress bool, fs vfs.IFS) (*NodeHost, *PST, error) {
+	rc := config.Config{
+		NodeID:             uint64(1),
+		ClusterID:          2,
+		ElectionRTT:        3,
+		HeartbeatRTT:       1,
+		CheckQuorum:        true,
+		SnapshotEntries:    10,
+		CompactionOverhead: 5,
+	}
+	return createSingleNodeTestNodeHostCfg(addr, datadir, slowSave, true, rc, compress, fs)
 }
 
 func createSingleNodeTestNodeHostCfg(addr string,
-	datadir string, slowSave bool, rc config.Config,
+	datadir string, slowSave bool, notifyCommit bool, rc config.Config,
 	compress bool, fs vfs.IFS) (*NodeHost, *PST, error) {
 	if compress {
 		rc.EntryCompressionType = config.Snappy
@@ -589,6 +603,7 @@ func createSingleNodeTestNodeHostCfg(addr string,
 		RaftAddress:         peers[1],
 		FS:                  fs,
 		SystemEventListener: &testSysEventListener{},
+		NotifyCommit:        notifyCommit,
 	}
 	if err := nhc.Prepare(); err != nil {
 		return nil, nil, err
@@ -654,7 +669,7 @@ func createConcurrentTestNodeHost(addr string,
 			return &tests.TestSnapshot{}
 		}
 	}
-	rc.ClusterID = 1 + taskWorkerCount
+	rc.ClusterID = 1 + applyWorkerCount
 	if err := nh.StartConcurrentCluster(peers, false, newConcurrentSM, rc); err != nil {
 		return nil, err
 	}
@@ -763,7 +778,7 @@ func singleConcurrentNodeHostTest(t *testing.T,
 			nh.Stop()
 		}()
 		waitForLeaderToBeElected(t, nh, 1)
-		waitForLeaderToBeElected(t, nh, 1+taskWorkerCount)
+		waitForLeaderToBeElected(t, nh, 1+applyWorkerCount)
 		tf(t, nh)
 	}()
 	reportLeakedFD(fs, t)
@@ -1150,7 +1165,7 @@ func TestCompactionCanBeRequested(t *testing.T) {
 				t.Fatalf("failed to request compaction %v", err)
 			}
 			select {
-			case <-op.CompletedC():
+			case <-op.ResultC():
 				break
 			case <-ctx.Done():
 				t.Fatalf("failed to complete the compaction")
@@ -1364,11 +1379,11 @@ func TestErrClusterNotFoundCanBeReturned(t *testing.T) {
 			t.Errorf("failed to return ErrClusterNotFound, %v", err)
 		}
 		cs := nh.GetNoOPSession(1234)
-		_, err = nh.propose(cs, make([]byte, 1), nil, 5*time.Second)
+		_, err = nh.propose(cs, make([]byte, 1), 5*time.Second)
 		if err != ErrClusterNotFound {
 			t.Errorf("failed to return ErrClusterNotFound, %v", err)
 		}
-		_, _, err = nh.readIndex(1234, nil, 5*time.Second)
+		_, _, err = nh.readIndex(1234, 5*time.Second)
 		if err != ErrClusterNotFound {
 			t.Errorf("failed to return ErrClusterNotFound, %v", err)
 		}
@@ -1407,7 +1422,7 @@ func TestRegisterASessionTwiceWillBeReported(t *testing.T) {
 		if err != nil {
 			t.Errorf("failed to propose client session %v", err)
 		}
-		r := <-rs.CompletedC
+		r := <-rs.ResultC()
 		if !r.Rejected() {
 			t.Errorf("failed to reject the cs registeration")
 		}
@@ -1551,7 +1566,7 @@ func runSingleNodeHostTest(t *testing.T,
 			t.Fatalf("%v", err)
 		}
 		nh, _, err := createSingleNodeTestNodeHostCfg(singleNodeHostTestAddr,
-			singleNodeHostTestDir, false, cfg, compressed, fs)
+			singleNodeHostTestDir, false, false, cfg, compressed, fs)
 		if err != nil {
 			t.Fatalf("failed to create nodehost %v", err)
 		}
@@ -1602,7 +1617,7 @@ func testNodeHostReadIndex(t *testing.T, fs vfs.IFS) {
 		if rs.node == nil {
 			t.Fatal("rs.node not set")
 		}
-		v := <-rs.CompletedC
+		v := <-rs.ResultC()
 		if !v.Completed() {
 			t.Errorf("failed to complete read index")
 		}
@@ -1626,7 +1641,7 @@ func TestNALookupCanReturnErrNotImplemented(t *testing.T) {
 		if err != nil {
 			t.Errorf("failed to read index %v", err)
 		}
-		v := <-rs.CompletedC
+		v := <-rs.ResultC()
 		if !v.Completed() {
 			t.Errorf("failed to complete read index")
 		}
@@ -1773,7 +1788,7 @@ func TestNodeHostAddNode(t *testing.T) {
 		if err != nil {
 			t.Errorf("failed to add node %v", err)
 		}
-		v := <-rs.CompletedC
+		v := <-rs.ResultC()
 		if !v.Completed() {
 			t.Errorf("failed to complete add node")
 		}
@@ -1814,7 +1829,7 @@ func TestNodeHostNodeUserPropose(t *testing.T) {
 		if err != nil {
 			t.Errorf("failed to make propose %v", err)
 		}
-		v := <-rs.CompletedC
+		v := <-rs.ResultC()
 		if !v.Completed() {
 			t.Errorf("failed to complete proposal")
 		}
@@ -1833,7 +1848,7 @@ func TestNodeHostNodeUserRead(t *testing.T) {
 		if err != nil {
 			t.Errorf("failed to read index %v", err)
 		}
-		v := <-rs.CompletedC
+		v := <-rs.ResultC()
 		if !v.Completed() {
 			t.Errorf("failed to complete read index")
 		}
@@ -1848,7 +1863,7 @@ func TestNodeHostAddObserverRemoveNode(t *testing.T) {
 		if err != nil {
 			t.Errorf("failed to add node %v", err)
 		}
-		v := <-rs.CompletedC
+		v := <-rs.ResultC()
 		if !v.Completed() {
 			t.Errorf("failed to complete add node")
 		}
@@ -1873,7 +1888,7 @@ func TestNodeHostAddObserverRemoveNode(t *testing.T) {
 		if err != nil {
 			t.Errorf("failed to remove node %v", err)
 		}
-		v = <-rs.CompletedC
+		v = <-rs.ResultC()
 		if !v.Completed() {
 			t.Errorf("failed to complete remove node")
 		}
@@ -2128,7 +2143,7 @@ func TestOnDiskSMCanStreamSnapshot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to add node %v", err)
 		}
-		s := <-rs.CompletedC
+		s := <-rs.ResultC()
 		if !s.Completed() {
 			t.Fatalf("failed to complete the add node request")
 		}
@@ -2229,7 +2244,7 @@ func TestOnDiskSMCanStreamSnapshot(t *testing.T) {
 
 func TestConcurrentStateMachineLookup(t *testing.T) {
 	fs := vfs.GetTestFS()
-	clusterID := 1 + taskWorkerCount
+	clusterID := 1 + applyWorkerCount
 	done := uint32(0)
 	tf := func(t *testing.T, nh *NodeHost) {
 		count := uint32(0)
@@ -2259,7 +2274,7 @@ func TestConcurrentStateMachineLookup(t *testing.T) {
 				if err != nil {
 					continue
 				}
-				s := <-rs.CompletedC
+				s := <-rs.ResultC()
 				if !s.Completed() {
 					continue
 				}
@@ -2288,7 +2303,7 @@ func TestConcurrentStateMachineLookup(t *testing.T) {
 
 func TestConcurrentStateMachineSaveSnapshot(t *testing.T) {
 	fs := vfs.GetTestFS()
-	clusterID := 1 + taskWorkerCount
+	clusterID := 1 + applyWorkerCount
 	tf := func(t *testing.T, nh *NodeHost) {
 		nhi := nh.GetNodeHostInfo(DefaultNodeHostInfoOption)
 		for _, ci := range nhi.ClusterInfoList {
@@ -2323,7 +2338,7 @@ func TestConcurrentStateMachineSaveSnapshot(t *testing.T) {
 
 func TestErrorCanBeReturnedWhenLookingUpConcurrentStateMachine(t *testing.T) {
 	fs := vfs.GetTestFS()
-	clusterID := 1 + taskWorkerCount
+	clusterID := 1 + applyWorkerCount
 	tf := func(t *testing.T, nh *NodeHost) {
 		for i := 0; i < 100; i++ {
 			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -2579,7 +2594,7 @@ func TestIsObserverIsReturnedWhenNodeIsObserver(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to add observer %v", err)
 		}
-		<-rs.CompletedC
+		<-rs.ResultC()
 		if err := nh2.StartOnDiskCluster(nil, true, newSM2, rc); err != nil {
 			t.Errorf("failed to start observer %v", err)
 		}
@@ -2613,7 +2628,7 @@ func TestSnapshotIndexWillPanicOnRegularRequestResult(t *testing.T) {
 				t.Fatalf("no panic")
 			}
 		}()
-		v := <-rs.CompletedC
+		v := <-rs.ResultC()
 		plog.Infof("%d", v.SnapshotIndex())
 	}
 	singleNodeHostTest(t, tf, fs)
@@ -2736,7 +2751,7 @@ func TestCanOverrideSnapshotOverhead(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to request snapshot")
 		}
-		v := <-sr.CompletedC
+		v := <-sr.ResultC()
 		if !v.Completed() {
 			t.Errorf("failed to complete the requested snapshot")
 		}
@@ -2751,7 +2766,7 @@ func TestCanOverrideSnapshotOverhead(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 			op, err := nh.RequestCompaction(2, 1)
 			if err == nil {
-				<-op.CompletedC()
+				<-op.ResultC()
 			}
 			ents, _, err := logdb.IterateEntries(nil, 0, 2, 1, 12, 14, math.MaxUint64)
 			if err != nil {
@@ -2783,7 +2798,7 @@ func TestSnapshotCanBeRequested(t *testing.T) {
 			t.Errorf("failed to request snapshot")
 		}
 		var index uint64
-		v := <-sr.CompletedC
+		v := <-sr.ResultC()
 		if !v.Completed() {
 			t.Errorf("failed to complete the requested snapshot")
 		}
@@ -2793,7 +2808,7 @@ func TestSnapshotCanBeRequested(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to request snapshot")
 		}
-		v = <-sr.CompletedC
+		v = <-sr.ResultC()
 		if !v.Rejected() {
 			t.Errorf("failed to complete the requested snapshot")
 		}
@@ -2822,6 +2837,66 @@ func TestSnapshotCanBeRequested(t *testing.T) {
 		}
 	}
 	singleNodeHostTest(t, tf, fs)
+}
+
+func TestClientCanBeNotifiedOnCommittedConfigChange(t *testing.T) {
+	fs := vfs.GetTestFS()
+	tf := func() {
+		nh, _, err := createNotifyCommitNodeHost(singleNodeHostTestAddr,
+			singleNodeHostTestDir, false, false, fs)
+		if err != nil {
+			t.Fatalf("failed to create nodehost %v", err)
+		}
+		defer nh.Stop()
+		waitForLeaderToBeElected(t, nh, 2)
+		rs, err := nh.RequestAddNode(2, 2, "localhost:3456", 0, time.Second)
+		if err != nil {
+			t.Fatalf("failed to request add node")
+		}
+		if rs.committedC == nil {
+			t.Fatalf("committedC not set")
+		}
+		cn := <-rs.ResultC()
+		if !cn.Committed() {
+			t.Fatalf("failed to get committed notification")
+		}
+		cn = <-rs.ResultC()
+		if !cn.Completed() {
+			t.Fatalf("failed to get completed notification")
+		}
+	}
+	runNodeHostTest(t, tf, fs)
+}
+
+func TestClientCanBeNotifiedOnCommittedProposals(t *testing.T) {
+	fs := vfs.GetTestFS()
+	tf := func() {
+		nh, _, err := createNotifyCommitNodeHost(singleNodeHostTestAddr,
+			singleNodeHostTestDir, false, false, fs)
+		if err != nil {
+			t.Fatalf("failed to create nodehost %v", err)
+		}
+		defer nh.Stop()
+		waitForLeaderToBeElected(t, nh, 2)
+		session := nh.GetNoOPSession(2)
+		cmd := make([]byte, 1518)
+		rs, err := nh.Propose(session, cmd, time.Second)
+		if err != nil {
+			t.Fatalf("failed to make proposal %v", err)
+		}
+		if rs.committedC == nil {
+			t.Fatalf("committedC not set")
+		}
+		cn := <-rs.ResultC()
+		if !cn.Committed() {
+			t.Fatalf("failed to get committed notification")
+		}
+		cn = <-rs.ResultC()
+		if !cn.Completed() {
+			t.Fatalf("failed to get completed notification")
+		}
+	}
+	runNodeHostTest(t, tf, fs)
 }
 
 func TestRequestSnapshotTimeoutWillBeReported(t *testing.T) {
@@ -2853,7 +2928,7 @@ func TestRequestSnapshotTimeoutWillBeReported(t *testing.T) {
 			t.Errorf("failed to request snapshot")
 		}
 		plog.Infof("going to wait for snapshot request to complete")
-		v := <-sr.CompletedC
+		v := <-sr.ResultC()
 		if !v.Timeout() {
 			t.Errorf("failed to report timeout")
 		}
@@ -2951,7 +3026,7 @@ func TestRemoveNodeDataRemovesAllNodeData(t *testing.T) {
 		if err != nil {
 			t.Errorf("failed to request snapshot")
 		}
-		v := <-sr.CompletedC
+		v := <-sr.ResultC()
 		if !v.Completed() {
 			t.Errorf("failed to complete the requested snapshot")
 		}
@@ -3066,7 +3141,7 @@ func TestRemoveNodeDataRemovesAllNodeData(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to request compaction %v", err)
 		}
-		<-sysop.CompletedC()
+		<-sysop.ResultC()
 	}
 	singleNodeHostTest(t, tf, fs)
 }
@@ -3103,7 +3178,7 @@ func TestSnapshotCanBeExported(t *testing.T) {
 			t.Errorf("failed to request snapshot")
 		}
 		var index uint64
-		v := <-sr.CompletedC
+		v := <-sr.ResultC()
 		if !v.Completed() {
 			t.Fatalf("failed to complete the requested snapshot")
 		}
@@ -3196,7 +3271,7 @@ func TestOnDiskStateMachineCanExportSnapshot(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to request snapshot %v", err)
 			}
-			v := <-sr.CompletedC
+			v := <-sr.ResultC()
 			if v.Aborted() {
 				aborted = true
 				continue
@@ -3282,6 +3357,7 @@ func testImportedSnapshotIsAlwaysRestored(t *testing.T,
 			RTTMillisecond: 2,
 			RaftAddress:    nodeHostTestAddr1,
 			FS:             fs,
+			LogDBConfig:    config.GetDefaultLogDBConfig(),
 		}
 		nh, err := NewNodeHost(nhc)
 		if err != nil {
@@ -3331,7 +3407,7 @@ func testImportedSnapshotIsAlwaysRestored(t *testing.T,
 			if err != nil {
 				t.Fatalf("failed to request snapshot %v", err)
 			}
-			v := <-sr.CompletedC
+			v := <-sr.ResultC()
 			if v.Rejected() {
 				time.Sleep(10 * time.Millisecond)
 				continue
@@ -3523,7 +3599,7 @@ func TestClusterWithoutQuorumCanBeRestoreByImportingSnapshot(t *testing.T) {
 			t.Fatalf("failed to request snapshot %v", err)
 		}
 		var index uint64
-		v := <-sr.CompletedC
+		v := <-sr.ResultC()
 		if !v.Completed() {
 			t.Fatalf("failed to complete the requested snapshot")
 		}
@@ -3858,11 +3934,13 @@ func TestNodeHostReturnsErrorWhenLogDBCanNotBeCreated(t *testing.T) {
 func TestBatchedAndPlainEntriesAreNotCompatible(t *testing.T) {
 	fs := vfs.GetTestFS()
 	tf := func() {
-		bff := func(dirs []string, lldirs []string) (raftio.ILogDB, error) {
-			return logdb.NewDefaultBatchedLogDB(dirs, lldirs, fs)
+		bff := func(config config.LogDBConfig,
+			dirs []string, lldirs []string) (raftio.ILogDB, error) {
+			return logdb.NewDefaultBatchedLogDB(config, dirs, lldirs, fs)
 		}
-		nff := func(dirs []string, lldirs []string) (raftio.ILogDB, error) {
-			return logdb.NewDefaultLogDB(dirs, lldirs, fs)
+		nff := func(config config.LogDBConfig,
+			dirs []string, lldirs []string) (raftio.ILogDB, error) {
+			return logdb.NewDefaultLogDB(config, dirs, lldirs, fs)
 		}
 		nhc := config.NodeHostConfig{
 			WALDir:         singleNodeHostTestDir,
@@ -3915,11 +3993,13 @@ func TestBatchedAndPlainEntriesAreNotCompatible(t *testing.T) {
 func TestNodeHostReturnsErrLogDBBrokenChangeWhenLogDBTypeChanges(t *testing.T) {
 	fs := vfs.GetTestFS()
 	tf := func() {
-		bff := func(dirs []string, lldirs []string) (raftio.ILogDB, error) {
-			return logdb.NewDefaultBatchedLogDB(dirs, lldirs, fs)
+		bff := func(config config.LogDBConfig,
+			dirs []string, lldirs []string) (raftio.ILogDB, error) {
+			return logdb.NewDefaultBatchedLogDB(config, dirs, lldirs, fs)
 		}
-		nff := func(dirs []string, lldirs []string) (raftio.ILogDB, error) {
-			return logdb.NewDefaultLogDB(dirs, lldirs, fs)
+		nff := func(config config.LogDBConfig,
+			dirs []string, lldirs []string) (raftio.ILogDB, error) {
+			return logdb.NewDefaultLogDB(config, dirs, lldirs, fs)
 		}
 		nhc := config.NodeHostConfig{
 			NodeHostDir:    singleNodeHostTestDir,
@@ -3980,11 +4060,13 @@ func getLogDBTestFunc(t *testing.T, nhc config.NodeHostConfig) func() {
 func TestNodeHostByDefaultUsePlainEntryLogDB(t *testing.T) {
 	fs := vfs.GetTestFS()
 	tf := func() {
-		bff := func(dirs []string, lldirs []string) (raftio.ILogDB, error) {
-			return logdb.NewDefaultBatchedLogDB(dirs, lldirs, fs)
+		bff := func(config config.LogDBConfig,
+			dirs []string, lldirs []string) (raftio.ILogDB, error) {
+			return logdb.NewDefaultBatchedLogDB(config, dirs, lldirs, fs)
 		}
-		nff := func(dirs []string, lldirs []string) (raftio.ILogDB, error) {
-			return logdb.NewDefaultLogDB(dirs, lldirs, fs)
+		nff := func(config config.LogDBConfig,
+			dirs []string, lldirs []string) (raftio.ILogDB, error) {
+			return logdb.NewDefaultLogDB(config, dirs, lldirs, fs)
 		}
 		nhc := config.NodeHostConfig{
 			NodeHostDir:    singleNodeHostTestDir,
@@ -4007,11 +4089,13 @@ func TestNodeHostByDefaultUsePlainEntryLogDB(t *testing.T) {
 func TestNodeHostByDefaultChecksWhetherToUseBatchedLogDB(t *testing.T) {
 	fs := vfs.GetTestFS()
 	xf := func() {
-		bff := func(dirs []string, lldirs []string) (raftio.ILogDB, error) {
-			return logdb.NewDefaultBatchedLogDB(dirs, lldirs, fs)
+		bff := func(config config.LogDBConfig,
+			dirs []string, lldirs []string) (raftio.ILogDB, error) {
+			return logdb.NewDefaultBatchedLogDB(config, dirs, lldirs, fs)
 		}
-		nff := func(dirs []string, lldirs []string) (raftio.ILogDB, error) {
-			return logdb.NewDefaultLogDB(dirs, lldirs, fs)
+		nff := func(config config.LogDBConfig,
+			dirs []string, lldirs []string) (raftio.ILogDB, error) {
+			return logdb.NewDefaultLogDB(config, dirs, lldirs, fs)
 		}
 		nhc := config.NodeHostConfig{
 			NodeHostDir:    singleNodeHostTestDir,
@@ -4031,8 +4115,9 @@ func TestNodeHostByDefaultChecksWhetherToUseBatchedLogDB(t *testing.T) {
 func TestNodeHostWithUnexpectedDeploymentIDWillBeDetected(t *testing.T) {
 	fs := vfs.GetTestFS()
 	tf := func() {
-		pf := func(dirs []string, lldirs []string) (raftio.ILogDB, error) {
-			return logdb.NewLogDB(dirs, lldirs, false, false, fs, pebble.NewKVStore)
+		pf := func(config config.LogDBConfig,
+			dirs []string, lldirs []string) (raftio.ILogDB, error) {
+			return logdb.NewLogDB(config, dirs, lldirs, false, false, fs, pebble.NewKVStore)
 		}
 		nhc := config.NodeHostConfig{
 			NodeHostDir:    singleNodeHostTestDir,
@@ -4061,8 +4146,9 @@ func TestNodeHostWithUnexpectedDeploymentIDWillBeDetected(t *testing.T) {
 func TestNodeHostUsingPebbleCanBeCreated(t *testing.T) {
 	fs := vfs.GetTestFS()
 	tf := func() {
-		pf := func(dirs []string, lldirs []string) (raftio.ILogDB, error) {
-			return logdb.NewLogDB(dirs, lldirs, false, false, fs, pebble.NewKVStore)
+		pf := func(config config.LogDBConfig,
+			dirs []string, lldirs []string) (raftio.ILogDB, error) {
+			return logdb.NewLogDB(config, dirs, lldirs, false, false, fs, pebble.NewKVStore)
 		}
 		nhc := config.NodeHostConfig{
 			NodeHostDir:    singleNodeHostTestDir,
