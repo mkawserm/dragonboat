@@ -26,7 +26,7 @@ import (
 
 const (
 	// DefaultKVStoreTypeName is the type name of the default kv store
-	DefaultKVStoreTypeName = "rocksdb"
+	DefaultKVStoreTypeName = "pebble"
 )
 
 func newDefaultKVStore(config config.LogDBConfig,
