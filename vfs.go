@@ -15,8 +15,8 @@
 package dragonboat
 
 import (
-	"github.com/lni/dragonboat/v3/config"
-	"github.com/lni/dragonboat/v3/internal/vfs"
+	"github.com/mkawserm/dragonboat/v3/config"
+	"github.com/mkawserm/dragonboat/v3/internal/vfs"
 )
 
 // MemFS is a in memory vfs intended to be used in testing. User applications

@@ -34,9 +34,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lni/dragonboat/v3/internal/tests/kvpb"
-	sm "github.com/lni/dragonboat/v3/statemachine"
 	"github.com/lni/goutils/random"
+	"github.com/mkawserm/dragonboat/v3/internal/tests/kvpb"
+	sm "github.com/mkawserm/dragonboat/v3/statemachine"
 )
 
 // random delays

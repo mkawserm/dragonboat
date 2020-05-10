@@ -19,10 +19,10 @@ package dragonboat
 import (
 	"sync/atomic"
 
-	"github.com/lni/dragonboat/v3/internal/logdb"
-	"github.com/lni/dragonboat/v3/internal/server"
-	"github.com/lni/dragonboat/v3/internal/transport"
-	"github.com/lni/dragonboat/v3/raftio"
+	"github.com/mkawserm/dragonboat/v3/internal/logdb"
+	"github.com/mkawserm/dragonboat/v3/internal/server"
+	"github.com/mkawserm/dragonboat/v3/internal/transport"
+	"github.com/mkawserm/dragonboat/v3/raftio"
 )
 
 func ApplyMonkeySettings() {

@@ -37,8 +37,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/lni/dragonboat/v3/config"
-	pb "github.com/lni/dragonboat/v3/raftpb"
+	"github.com/mkawserm/dragonboat/v3/config"
+	pb "github.com/mkawserm/dragonboat/v3/raftpb"
 )
 
 // Campaign starts the campaign procedure.

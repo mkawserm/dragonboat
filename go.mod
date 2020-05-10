@@ -1,4 +1,4 @@
-module github.com/lni/dragonboat/v3
+module github.com/mkawserm/dragonboat/v3
 
 go 1.14
 

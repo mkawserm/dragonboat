@@ -15,7 +15,7 @@
 package raft
 
 import (
-	pb "github.com/lni/dragonboat/v3/raftpb"
+	pb "github.com/mkawserm/dragonboat/v3/raftpb"
 )
 
 func countConfigChange(entries []pb.Entry) int {

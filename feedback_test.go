@@ -17,7 +17,7 @@ package dragonboat
 import (
 	"testing"
 
-	"github.com/lni/dragonboat/v3/raftio"
+	"github.com/mkawserm/dragonboat/v3/raftio"
 )
 
 func TestSnapshotStatusAddStatus(t *testing.T) {

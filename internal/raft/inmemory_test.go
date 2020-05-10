@@ -18,8 +18,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/lni/dragonboat/v3/internal/server"
-	pb "github.com/lni/dragonboat/v3/raftpb"
+	"github.com/mkawserm/dragonboat/v3/internal/server"
+	pb "github.com/mkawserm/dragonboat/v3/raftpb"
 )
 
 func TestInMemCheckMarkerIndex(t *testing.T) {

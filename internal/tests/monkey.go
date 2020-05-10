@@ -17,7 +17,7 @@
 package tests
 
 import (
-	"github.com/lni/dragonboat/v3/logger"
+	"github.com/mkawserm/dragonboat/v3/logger"
 )
 
 var (

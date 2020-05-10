@@ -39,9 +39,9 @@ import (
 	"io"
 	"math"
 
-	"github.com/lni/dragonboat/v3/internal/settings"
-	"github.com/lni/dragonboat/v3/internal/vfs"
-	pb "github.com/lni/dragonboat/v3/raftpb"
+	"github.com/mkawserm/dragonboat/v3/internal/settings"
+	"github.com/mkawserm/dragonboat/v3/internal/vfs"
+	pb "github.com/mkawserm/dragonboat/v3/raftpb"
 )
 
 const (

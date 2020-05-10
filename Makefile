@@ -20,7 +20,7 @@ OS := $(shell uname)
 # the location of this Makefile
 PKGROOT=$(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 # name of the package
-PKGNAME=github.com/lni/dragonboat/v3
+PKGNAME=github.com/mkawserm/dragonboat/v3
 # set the environmental variable DRAGONBOAT_LOGDB to lmdb to use lmdb based
 # LogDB implementation. 
 ifeq ($(DRAGONBOAT_LOGDB),rocksdb)

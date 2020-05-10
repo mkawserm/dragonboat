@@ -17,7 +17,7 @@ package dragonboat
 import (
 	"sync"
 
-	"github.com/lni/dragonboat/v3/raftio"
+	"github.com/mkawserm/dragonboat/v3/raftio"
 )
 
 var (

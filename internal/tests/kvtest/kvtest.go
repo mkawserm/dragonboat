@@ -21,8 +21,8 @@ package main
 import "C"
 
 import (
-	"github.com/lni/dragonboat/v3/internal/tests"
-	"github.com/lni/dragonboat/v3/statemachine"
+	"github.com/mkawserm/dragonboat/v3/internal/tests"
+	"github.com/mkawserm/dragonboat/v3/statemachine"
 )
 
 // DragonboatApplicationName is the name of your plugin.

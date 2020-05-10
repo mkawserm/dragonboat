@@ -23,7 +23,7 @@ import (
 
 	proto "github.com/golang/protobuf/proto"
 
-	"github.com/lni/dragonboat/v3/client"
+	"github.com/mkawserm/dragonboat/v3/client"
 )
 
 func TestCanUsedWithEtcd(t *testing.T) {

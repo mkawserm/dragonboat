@@ -20,7 +20,7 @@ import (
 
 const (
 	// RepoName is the repo name used in capnslog.
-	RepoName = "github.com/lni/dragonboat/v3"
+	RepoName = "github.com/mkawserm/dragonboat/v3"
 )
 
 var _ ILogger = &capnsLog{}

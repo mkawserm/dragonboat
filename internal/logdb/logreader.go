@@ -38,10 +38,10 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/lni/dragonboat/v3/internal/raft"
-	"github.com/lni/dragonboat/v3/raftio"
-	pb "github.com/lni/dragonboat/v3/raftpb"
 	"github.com/lni/goutils/logutil"
+	"github.com/mkawserm/dragonboat/v3/internal/raft"
+	"github.com/mkawserm/dragonboat/v3/raftio"
+	pb "github.com/mkawserm/dragonboat/v3/raftpb"
 )
 
 var _ raft.ILogDB = &LogReader{}

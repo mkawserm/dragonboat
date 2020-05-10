@@ -18,9 +18,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lni/dragonboat/v3/internal/vfs"
-	pb "github.com/lni/dragonboat/v3/raftpb"
 	gvfs "github.com/lni/goutils/vfs"
+	"github.com/mkawserm/dragonboat/v3/internal/vfs"
+	pb "github.com/mkawserm/dragonboat/v3/raftpb"
 )
 
 func reportLeakedFD(fs vfs.IFS, t *testing.T) {

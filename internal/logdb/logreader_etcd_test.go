@@ -19,11 +19,11 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/lni/dragonboat/v3/internal/raft"
-	"github.com/lni/dragonboat/v3/internal/vfs"
-	"github.com/lni/dragonboat/v3/raftio"
-	pb "github.com/lni/dragonboat/v3/raftpb"
 	"github.com/lni/goutils/leaktest"
+	"github.com/mkawserm/dragonboat/v3/internal/raft"
+	"github.com/mkawserm/dragonboat/v3/internal/vfs"
+	"github.com/mkawserm/dragonboat/v3/raftio"
+	pb "github.com/mkawserm/dragonboat/v3/raftpb"
 )
 
 // most tests below are ported from etcd rafts

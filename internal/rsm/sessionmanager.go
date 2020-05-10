@@ -17,7 +17,7 @@ package rsm
 import (
 	"io"
 
-	sm "github.com/lni/dragonboat/v3/statemachine"
+	sm "github.com/mkawserm/dragonboat/v3/statemachine"
 )
 
 var _ ILoadable = &SessionManager{}

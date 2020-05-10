@@ -17,8 +17,8 @@ package rsm
 import (
 	"testing"
 
-	"github.com/lni/dragonboat/v3/internal/vfs"
 	"github.com/lni/goutils/leaktest"
+	"github.com/mkawserm/dragonboat/v3/internal/vfs"
 )
 
 const (

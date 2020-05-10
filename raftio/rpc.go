@@ -30,7 +30,7 @@ package raftio
 import (
 	"context"
 
-	pb "github.com/lni/dragonboat/v3/raftpb"
+	pb "github.com/mkawserm/dragonboat/v3/raftpb"
 )
 
 // RequestHandler is the handler function type for handling received message

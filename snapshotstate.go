@@ -18,9 +18,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/lni/dragonboat/v3/internal/rsm"
-	pb "github.com/lni/dragonboat/v3/raftpb"
 	"github.com/lni/goutils/random"
+	"github.com/mkawserm/dragonboat/v3/internal/rsm"
+	pb "github.com/mkawserm/dragonboat/v3/raftpb"
 )
 
 type getSink func() pb.IChunkSink

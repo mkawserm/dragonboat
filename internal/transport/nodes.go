@@ -22,9 +22,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/lni/dragonboat/v3/internal/server"
-	"github.com/lni/dragonboat/v3/raftio"
 	"github.com/lni/goutils/logutil"
+	"github.com/mkawserm/dragonboat/v3/internal/server"
+	"github.com/mkawserm/dragonboat/v3/raftio"
 )
 
 var _ INodeRegistry = &Nodes{}

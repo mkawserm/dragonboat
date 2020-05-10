@@ -15,14 +15,14 @@
 package raft
 
 import (
-	"github.com/lni/dragonboat/v3/config"
-	"github.com/lni/dragonboat/v3/internal/settings"
+	"github.com/mkawserm/dragonboat/v3/config"
+	"github.com/mkawserm/dragonboat/v3/internal/settings"
 	"math"
 	"reflect"
 	"sort"
 	"testing"
 
-	pb "github.com/lni/dragonboat/v3/raftpb"
+	pb "github.com/mkawserm/dragonboat/v3/raftpb"
 )
 
 //

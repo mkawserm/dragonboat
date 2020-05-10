@@ -16,7 +16,7 @@ Pebble is used by default, no configuration is required.
 
 To use RocksDB as Dragonboat's storage engine, you need to install RocksDB first. You may also need to set the CGO_CFLAGS and CGO_LDFLAGS environmental variables to point to your RocksDB installation location when building your own applications.
 
-Switch to RocksDB only involves one extra line of code, just set the LogDBFactory field of your config.NodeHostConfig to function rocksdb.NewLogDB available in the github.com/lni/dragonboat/v3/plugin/rocksdb.
+Switch to RocksDB only involves one extra line of code, just set the LogDBFactory field of your config.NodeHostConfig to function rocksdb.NewLogDB available in the github.com/mkawserm/dragonboat/v3/plugin/rocksdb.
 
 ## Use custom storage solution ##
 
