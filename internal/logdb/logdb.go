@@ -51,7 +51,7 @@ func NewDefaultLogDB(config config.LogDBConfig, dirs []string,
 // implementation with batched entry support.
 func NewDefaultBatchedLogDB(config config.LogDBConfig, dirs []string,
 	lldirs []string, fs vfs.IFS) (raftio.ILogDB, error) {
-	return NewLogDB(config, dirs, lldirs, true, false, fs, newDefaultKVStore)
+	return NewLogDB(config, dirs, lldirs, false, false, fs, newDefaultKVStore)
 }
 
 // NewLogDB creates a Log DB instance based on provided configuration
