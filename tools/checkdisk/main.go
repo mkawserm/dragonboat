@@ -29,7 +29,7 @@ import (
 	"github.com/mkawserm/dragonboat/v3"
 	"github.com/mkawserm/dragonboat/v3/config"
 	"github.com/mkawserm/dragonboat/v3/internal/logdb"
-	"github.com/mkawserm/dragonboat/v3/internal/logdb/kv/pebble"
+	"github.com/mkawserm/dragonboat/v3/internal/logdb/kv/badger"
 	"github.com/mkawserm/dragonboat/v3/internal/vfs"
 	"github.com/mkawserm/dragonboat/v3/logger"
 	"github.com/mkawserm/dragonboat/v3/raftio"
@@ -48,7 +48,7 @@ var inmemfs = flag.Bool("inmem-fs", false, "use in-memory filesystem")
 func newBatchedLogDB(cfg config.LogDBConfig,
 	dirs []string, lldirs []string) (raftio.ILogDB, error) {
 	fs := vfs.DefaultFS
-	return logdb.NewLogDB(cfg, dirs, lldirs, true, false, fs, pebble.NewKVStore)
+	return logdb.NewLogDB(cfg, dirs, lldirs, true, false, fs, badger.NewKVStore)
 }
 
 type dummyStateMachine struct{}
