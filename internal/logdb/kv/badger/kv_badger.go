@@ -140,6 +140,9 @@ func (b *Badger) IterateValue(fk []byte, lk []byte, inc bool, op func(key []byte
 				return err
 			}
 
+			fmt.Println("key:", key)
+			fmt.Println("value:", val)
+
 			if inc {
 				if bytes.Compare(key, lk) > 0 {
 					return nil
