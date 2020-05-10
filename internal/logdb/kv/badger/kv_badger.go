@@ -123,7 +123,9 @@ func (b *Badger) Close() error {
 
 func (b *Badger) IterateValue(fk []byte, lk []byte, inc bool, op func(key []byte, data []byte) (bool, error)) error {
 	err := b.mDb.View(func(txn *badgerDb.Txn) error {
-		it := txn.NewIterator(badgerDb.DefaultIteratorOptions)
+		opts := badgerDb.DefaultIteratorOptions
+		opts.Reverse = true
+		it := txn.NewIterator(opts)
 		defer it.Close()
 
 		for it.Seek(fk); it.Valid(); it.Next() {
