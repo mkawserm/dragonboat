@@ -117,6 +117,7 @@ func (b *Badger) Close() error {
 	if b.mDb == nil {
 		return nil
 	}
+	_ = b.mDb.Sync()
 	_ = b.mDb.Close()
 	b.mDb = nil
 	return nil
@@ -192,7 +193,7 @@ func (b *Badger) SaveValue(key []byte, value []byte) error {
 	err := b.mDb.Update(func(txn *badgerDb.Txn) error {
 		return txn.Set(key, value)
 	})
-
+	_ = b.mDb.Sync()
 	return err
 }
 
@@ -227,7 +228,9 @@ func (b *Badger) CommitWriteBatch(wb kv.IWriteBatch) error {
 	if !ok {
 		panic("unknown type")
 	}
-	return pwb.mTxn.Commit()
+	err := pwb.mTxn.Commit()
+	_ = b.mDb.Sync()
+	return err
 }
 
 func (b *Badger) BulkRemoveEntries(firstKey []byte, lastKey []byte) error {
