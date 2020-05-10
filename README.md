@@ -1,7 +1,7 @@
 ![dragonboat](./docs/dragonboat.jpg)
 # Dragonboat - A Multi-Group Raft library in Go ##
 [![license](http://img.shields.io/badge/license-Apache2-blue.svg)](https://github.com/lni/dragonboat/blob/master/LICENSE)
-![Build status travis-ci](https://travis-ci.com/lni/dragonboat.svg?branch=master)
+
 
 
 ## About ##
