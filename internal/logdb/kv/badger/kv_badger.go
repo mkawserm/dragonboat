@@ -231,6 +231,7 @@ func (b *Badger) CompactEntries(firstKey []byte, lastKey []byte) error {
 	err := b.mDb.Update(func(txn *badgerDb.Txn) error {
 		opts := badgerDb.DefaultIteratorOptions
 		opts.PrefetchValues = false
+		opts.Reverse = true
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
