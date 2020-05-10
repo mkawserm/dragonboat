@@ -177,7 +177,7 @@ func (b *Badger) GetValue(key []byte, op func([]byte) error) error {
 		}
 		if item == nil {
 			fmt.Println("Nil item")
-			return nil
+			return op(nil)
 		}
 
 		val, err := item.ValueCopy(nil)
