@@ -2,6 +2,7 @@ package badger
 
 import (
 	"bytes"
+	"fmt"
 	badgerDb "github.com/dgraph-io/badger/v2"
 	badgerDbOptions "github.com/dgraph-io/badger/v2/options"
 	"github.com/mkawserm/dragonboat/v3/config"
@@ -122,6 +123,8 @@ func (b *Badger) Close() error {
 }
 
 func (b *Badger) IterateValue(fk []byte, lk []byte, inc bool, op func(key []byte, data []byte) (bool, error)) error {
+	fmt.Println("fk:", fk)
+	fmt.Println("lk:", lk)
 	err := b.mDb.View(func(txn *badgerDb.Txn) error {
 		opts := badgerDb.DefaultIteratorOptions
 		opts.Reverse = false
@@ -129,6 +132,7 @@ func (b *Badger) IterateValue(fk []byte, lk []byte, inc bool, op func(key []byte
 		defer it.Close()
 
 		for it.Seek(fk); it.Valid(); it.Next() {
+			fmt.Println("seek")
 			item := it.Item()
 			key := item.Key()
 			val, err := item.ValueCopy(nil)
