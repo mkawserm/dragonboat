@@ -2,7 +2,6 @@ package badger
 
 import (
 	"bytes"
-	"fmt"
 	badgerDb "github.com/dgraph-io/badger/v2"
 	badgerDbOptions "github.com/dgraph-io/badger/v2/options"
 	"github.com/mkawserm/dragonboat/v3/config"
@@ -27,24 +26,20 @@ type badgerWriteBatch struct {
 }
 
 func (w *badgerWriteBatch) Clear() {
-	fmt.Println("wb clear")
 	w.mTxn.Discard()
 	w.mTxn = w.mDb.NewTransaction(true)
 	w.mCount = 0
 }
 
 func (w *badgerWriteBatch) Count() int {
-	fmt.Println("wb count")
 	return w.mCount
 }
 
 func (w *badgerWriteBatch) Commit() error {
-	fmt.Println("wb commit")
 	return w.mTxn.Commit()
 }
 
 func (w *badgerWriteBatch) Put(key []byte, val []byte) {
-	fmt.Println("wb put")
 	if err := w.mTxn.Set(key, val); err == badgerDb.ErrTxnTooBig {
 		if err := w.mTxn.Commit(); err != nil {
 			panic(err)
@@ -59,7 +54,6 @@ func (w *badgerWriteBatch) Put(key []byte, val []byte) {
 }
 
 func (w *badgerWriteBatch) Delete(key []byte) {
-	fmt.Println("wb delete")
 	if err := w.mTxn.Delete(key); err == badgerDb.ErrTxnTooBig {
 		if err := w.mTxn.Commit(); err != nil {
 			panic(err)
@@ -74,7 +68,6 @@ func (w *badgerWriteBatch) Delete(key []byte) {
 }
 
 func (w *badgerWriteBatch) Destroy() {
-	fmt.Println("wb destroy")
 	w.mTxn.Discard()
 }
 
@@ -120,7 +113,6 @@ func (b *Badger) Name() string {
 }
 
 func (b *Badger) Close() error {
-	fmt.Println("Close")
 	if b.mDb == nil {
 		return nil
 	}
@@ -130,7 +122,6 @@ func (b *Badger) Close() error {
 }
 
 func (b *Badger) IterateValue(fk []byte, lk []byte, inc bool, op func(key []byte, data []byte) (bool, error)) error {
-	fmt.Println("IterateValue")
 	err := b.mDb.View(func(txn *badgerDb.Txn) error {
 		it := txn.NewIterator(badgerDb.DefaultIteratorOptions)
 		defer it.Close()
@@ -168,7 +159,6 @@ func (b *Badger) IterateValue(fk []byte, lk []byte, inc bool, op func(key []byte
 }
 
 func (b *Badger) GetValue(key []byte, op func([]byte) error) error {
-	fmt.Println("Getting value: ", key)
 	err := b.mDb.View(func(txn *badgerDb.Txn) error {
 		item, err := txn.Get(key)
 
@@ -176,7 +166,6 @@ func (b *Badger) GetValue(key []byte, op func([]byte) error) error {
 			return err
 		}
 		if item == nil {
-			fmt.Println("Nil item")
 			return op(nil)
 		}
 
@@ -184,7 +173,6 @@ func (b *Badger) GetValue(key []byte, op func([]byte) error) error {
 		if err != nil {
 			return err
 		}
-		fmt.Println("value found:", val)
 		return op(val)
 	})
 
@@ -192,7 +180,6 @@ func (b *Badger) GetValue(key []byte, op func([]byte) error) error {
 }
 
 func (b *Badger) SaveValue(key []byte, value []byte) error {
-	fmt.Println("Save value: ", key)
 	err := b.mDb.Update(func(txn *badgerDb.Txn) error {
 		return txn.Set(key, value)
 	})
@@ -201,7 +188,6 @@ func (b *Badger) SaveValue(key []byte, value []byte) error {
 }
 
 func (b *Badger) DeleteValue(key []byte) error {
-	fmt.Println("Delete value: ", key)
 	err := b.mDb.Update(func(txn *badgerDb.Txn) error {
 		return txn.Delete(key)
 	})
@@ -210,7 +196,6 @@ func (b *Badger) DeleteValue(key []byte) error {
 }
 
 func (b *Badger) GetWriteBatch(ctx raftio.IContext) kv.IWriteBatch {
-	fmt.Println("Get write batch: ")
 	if ctx != nil {
 		wb := ctx.GetWriteBatch()
 		if wb != nil {
@@ -229,7 +214,6 @@ func (b *Badger) GetWriteBatch(ctx raftio.IContext) kv.IWriteBatch {
 }
 
 func (b *Badger) CommitWriteBatch(wb kv.IWriteBatch) error {
-	fmt.Println("Commit write batch: ")
 	pwb, ok := wb.(*badgerWriteBatch)
 	if !ok {
 		panic("unknown type")
@@ -238,12 +222,10 @@ func (b *Badger) CommitWriteBatch(wb kv.IWriteBatch) error {
 }
 
 func (b *Badger) BulkRemoveEntries(firstKey []byte, lastKey []byte) error {
-	fmt.Println("BulkRemoveEntries")
 	return b.CompactEntries(firstKey, lastKey)
 }
 
 func (b *Badger) CompactEntries(firstKey []byte, lastKey []byte) error {
-	fmt.Println("CompactEntries")
 	err := b.mDb.Update(func(txn *badgerDb.Txn) error {
 		opts := badgerDb.DefaultIteratorOptions
 		opts.PrefetchValues = false
@@ -268,7 +250,6 @@ func (b *Badger) CompactEntries(firstKey []byte, lastKey []byte) error {
 }
 
 func (b *Badger) FullCompaction() error {
-	fmt.Println("FullCompaction")
 	fk := make([]byte, MaxKeyLength)
 	lk := make([]byte, MaxKeyLength)
 	for i := uint64(0); i < MaxKeyLength; i++ {
