@@ -2,17 +2,23 @@ package badger
 
 import (
 	"bytes"
+	"fmt"
 	badgerDb "github.com/dgraph-io/badger/v2"
 	badgerDbOptions "github.com/dgraph-io/badger/v2/options"
 	"github.com/mkawserm/dragonboat/v3/config"
 	"github.com/mkawserm/dragonboat/v3/internal/fileutil"
 	"github.com/mkawserm/dragonboat/v3/internal/logdb/kv"
 	"github.com/mkawserm/dragonboat/v3/internal/vfs"
+	"github.com/mkawserm/dragonboat/v3/logger"
 	"github.com/mkawserm/dragonboat/v3/raftio"
 	"time"
 )
 
 const MaxKeyLength = 1024
+
+var (
+	plog = logger.GetLogger("kv_badger")
+)
 
 type badgerWriteBatch struct {
 	mDb    *badgerDb.DB
@@ -94,6 +100,7 @@ func openBadgerDb(config config.LogDBConfig,
 	opts.TableLoadingMode = badgerDbOptions.LoadToRAM
 	opts.ValueLogLoadingMode = badgerDbOptions.MemoryMap
 	opts.Compression = badgerDbOptions.Snappy
+	opts.Logger = plog
 	db, err := badgerDb.Open(opts)
 	if err != nil {
 		return nil, err
@@ -153,6 +160,7 @@ func (b *Badger) IterateValue(fk []byte, lk []byte, inc bool, op func(key []byte
 }
 
 func (b *Badger) GetValue(key []byte, op func([]byte) error) error {
+	fmt.Println("Getting value: ", key)
 	err := b.mDb.View(func(txn *badgerDb.Txn) error {
 		item, err := txn.Get(key)
 
@@ -167,6 +175,7 @@ func (b *Badger) GetValue(key []byte, op func([]byte) error) error {
 		if err != nil {
 			return err
 		}
+		fmt.Println("value found:", val)
 		return op(val)
 	})
 
