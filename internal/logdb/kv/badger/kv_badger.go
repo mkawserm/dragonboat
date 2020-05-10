@@ -124,7 +124,7 @@ func (b *Badger) Close() error {
 func (b *Badger) IterateValue(fk []byte, lk []byte, inc bool, op func(key []byte, data []byte) (bool, error)) error {
 	err := b.mDb.View(func(txn *badgerDb.Txn) error {
 		opts := badgerDb.DefaultIteratorOptions
-		opts.Reverse = true
+		opts.Reverse = false
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
@@ -231,7 +231,7 @@ func (b *Badger) CompactEntries(firstKey []byte, lastKey []byte) error {
 	err := b.mDb.Update(func(txn *badgerDb.Txn) error {
 		opts := badgerDb.DefaultIteratorOptions
 		opts.PrefetchValues = false
-		opts.Reverse = true
+		opts.Reverse = false
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
